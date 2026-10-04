@@ -7,9 +7,10 @@
 // ===== moon.mod 解析 =====
 
 // 解析 moon.mod（TOML 简化语法）或 moon.mod.json
-function parseMod(text) {
+// fetcher.js 也复用此函数解析从注册中心拉取的模块描述
+export function parseMod(text) {
   const trimmed = text.trim();
-  if (trimmed.startsWith('{')) {
+  if (trimmed.startsWith("{")) {
     return parseModJson(trimmed);
   }
   return parseModToml(trimmed);
@@ -19,35 +20,41 @@ function parseModJson(text) {
   try {
     const obj = JSON.parse(text);
     return {
-      name: obj.name || 'unknown',
-      version: obj.version || '0.0.0',
+      name: obj.name || "unknown",
+      version: obj.version || "0.0.0",
       license: obj.license || null,
       deps: normalizeDeps(obj.deps || {}),
     };
   } catch (e) {
-    return { name: 'unknown', version: '0.0.0', license: null, deps: {}, parse_error: e.message };
+    return {
+      name: "unknown",
+      version: "0.0.0",
+      license: null,
+      deps: {},
+      parse_error: e.message,
+    };
   }
 }
 
 function parseModToml(text) {
-  const result = { name: 'unknown', version: '0.0.0', license: null, deps: {} };
-  const lines = text.split('\n');
+  const result = { name: "unknown", version: "0.0.0", license: null, deps: {} };
+  const lines = text.split("\n");
   let inImport = false;
 
   for (let raw of lines) {
     let line = raw.trim();
     // 去注释
-    const hashIdx = line.indexOf('#');
+    const hashIdx = line.indexOf("#");
     if (hashIdx >= 0) line = line.substring(0, hashIdx).trim();
     if (!line) continue;
 
-    if (line.startsWith('name') && line.includes('=')) {
-      result.name = stripQuotes(line.split('=')[1].trim());
-    } else if (line.startsWith('version') && line.includes('=')) {
-      result.version = stripQuotes(line.split('=')[1].trim());
-    } else if (line.startsWith('license') && line.includes('=')) {
-      result.license = stripQuotes(line.split('=')[1].trim());
-    } else if (line.startsWith('import')) {
+    if (line.startsWith("name") && line.includes("=")) {
+      result.name = stripQuotes(line.split("=")[1].trim());
+    } else if (line.startsWith("version") && line.includes("=")) {
+      result.version = stripQuotes(line.split("=")[1].trim());
+    } else if (line.startsWith("license") && line.includes("=")) {
+      result.license = stripQuotes(line.split("=")[1].trim());
+    } else if (line.startsWith("import")) {
       inImport = true;
       // 单行：import { "x@1.0" }
       const braceMatch = line.match(/\{([^}]*)\}/);
@@ -62,7 +69,7 @@ function parseModToml(text) {
         const { name, version } = splitDepName(m[1]);
         result.deps[name] = version;
       }
-      if (line.includes('}')) inImport = false;
+      if (line.includes("}")) inImport = false;
     }
   }
   return result;
@@ -79,11 +86,11 @@ function addImports(deps, str) {
 }
 
 function splitDepName(s) {
-  const at = s.lastIndexOf('@');
+  const at = s.lastIndexOf("@");
   if (at > 0) {
     return { name: s.substring(0, at), version: s.substring(at + 1) };
   }
-  return { name: s, version: 'latest' };
+  return { name: s, version: "latest" };
 }
 
 function normalizeDeps(deps) {
@@ -97,7 +104,7 @@ function normalizeDeps(deps) {
 }
 
 function stripQuotes(s) {
-  return s.replace(/^["']|["']$/g, '');
+  return s.replace(/^["']|["']$/g, "");
 }
 
 // ===== 图构建 =====
@@ -105,10 +112,12 @@ function stripQuotes(s) {
 // BFS 构建依赖图
 function buildGraph(rootMod, modules, maxDepth = 10) {
   const nodes = new Map(); // id -> { id, name, version, depth }
-  const edges = [];        // [{ from, to }]
+  const edges = []; // [{ from, to }]
   const visited = new Set();
 
-  function makeId(name, version) { return `${name}@${version}`; }
+  function makeId(name, version) {
+    return `${name}@${version}`;
+  }
 
   function addNode(name, version, depth) {
     const id = makeId(name, version);
@@ -148,7 +157,11 @@ function buildGraph(rootMod, modules, maxDepth = 10) {
       addEdge(curId, depId);
       if (!visited.has(depId)) {
         visited.add(depId);
-        queue.push({ name: depName, version: depVersion, depth: cur.depth + 1 });
+        queue.push({
+          name: depName,
+          version: depVersion,
+          depth: cur.depth + 1,
+        });
       }
     }
   }
@@ -165,7 +178,13 @@ function buildGraph(rootMod, modules, maxDepth = 10) {
 // 5 维评分：新鲜度(25%) / 许可证(20%) / 废弃API(25%) / 大小(20%) / 活跃度(10%)
 // 每维 0-100 分，加权求和
 
-const WEIGHTS = { freshness: 0.25, compliance: 0.20, deprecated: 0.25, size: 0.20, activity: 0.10 };
+const WEIGHTS = {
+  freshness: 0.25,
+  compliance: 0.2,
+  deprecated: 0.25,
+  size: 0.2,
+  activity: 0.1,
+};
 
 // 每个维度的子评分逻辑
 
@@ -188,17 +207,30 @@ function scoreFreshness(mod, meta) {
 function parseVersion(v) {
   const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!m) return null;
-  return { major: parseInt(m[1]), minor: parseInt(m[2]), patch: parseInt(m[3]) };
+  return {
+    major: parseInt(m[1]),
+    minor: parseInt(m[2]),
+    patch: parseInt(m[3]),
+  };
 }
 
 function scoreCompliance(mod, meta) {
   const license = meta.license || mod.license;
   if (!license) return 40; // 无许可证有风险
-  const ok = ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'Unlicense', 'Zlib'];
+  const ok = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "Zlib",
+  ];
   const upper = license.toUpperCase();
-  if (ok.some(l => upper.includes(l.toUpperCase()))) return 100;
-  if (upper.includes('GPL') || upper.includes('AGPL') || upper.includes('LGPL')) return 30; // copyleft
-  if (upper.includes('MPL')) return 60;
+  if (ok.some((l) => upper.includes(l.toUpperCase()))) return 100;
+  if (upper.includes("GPL") || upper.includes("AGPL") || upper.includes("LGPL"))
+    return 30; // copyleft
+  if (upper.includes("MPL")) return 60;
   return 50;
 }
 
@@ -239,10 +271,10 @@ function computeHealthScore(node, mod, meta) {
 
   const total = Math.round(
     freshness * WEIGHTS.freshness +
-    compliance * WEIGHTS.compliance +
-    deprecated * WEIGHTS.deprecated +
-    size * WEIGHTS.size +
-    activity * WEIGHTS.activity
+      compliance * WEIGHTS.compliance +
+      deprecated * WEIGHTS.deprecated +
+      size * WEIGHTS.size +
+      activity * WEIGHTS.activity,
   );
 
   return {
@@ -264,64 +296,96 @@ function makeDiagnostic(code, severity, nodeId, msg) {
 
 function diagnose(graph, metas) {
   const diags = [];
-  const nodeMap = new Map(graph.nodes.map(n => [n.id, n]));
+  const nodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
 
   for (const node of graph.nodes) {
     const meta = metas[node.id] || {};
-    const mod = meta._mod || { name: node.name, version: node.version, deps: {} };
+    const mod = meta._mod || {
+      name: node.name,
+      version: node.version,
+      deps: {},
+    };
 
     // OUTDATED-001
     if (meta.latest_version && mod.version !== meta.latest_version) {
-      diags.push(makeDiagnostic(
-        'OUTDATED-001', 'warning', node.id,
-        `${node.name} 当前 v${mod.version}，最新 ${meta.latest_version}，建议升级`
-      ));
+      diags.push(
+        makeDiagnostic(
+          "OUTDATED-001",
+          "warning",
+          node.id,
+          `${node.name} 当前 v${mod.version}，最新 ${meta.latest_version}，建议升级`,
+        ),
+      );
     }
 
     // LICENSE-001
     const license = meta.license || mod.license;
     if (!license) {
-      diags.push(makeDiagnostic(
-        'LICENSE-001', 'info', node.id,
-        `${node.name} 未声明许可证，商业使用存在风险`
-      ));
+      diags.push(
+        makeDiagnostic(
+          "LICENSE-001",
+          "info",
+          node.id,
+          `${node.name} 未声明许可证，商业使用存在风险`,
+        ),
+      );
     } else if (/GPL|AGPL|LGPL/i.test(license)) {
-      diags.push(makeDiagnostic(
-        'LICENSE-002', 'warning', node.id,
-        `${node.name} 使用 ${license}，需注意 copyleft 传染性`
-      ));
+      diags.push(
+        makeDiagnostic(
+          "LICENSE-002",
+          "warning",
+          node.id,
+          `${node.name} 使用 ${license}，需注意 copyleft 传染性`,
+        ),
+      );
     }
 
     // DEPRECATED-001
     const depApiCount = (meta.deprecated_apis || []).length;
     if (depApiCount > 0) {
-      diags.push(makeDiagnostic(
-        'DEPRECATED-001', 'info', node.id,
-        `${node.name} 含 ${depApiCount} 个废弃 API`
-      ));
+      diags.push(
+        makeDiagnostic(
+          "DEPRECATED-001",
+          "info",
+          node.id,
+          `${node.name} 含 ${depApiCount} 个废弃 API`,
+        ),
+      );
     }
 
     // SIZE-001
     const size = meta.self_size || 0;
     if (size > 1_000_000) {
-      diags.push(makeDiagnostic(
-        'SIZE-001', 'warning', node.id,
-        `${node.name} 体积 ${fmtBytes(size)}，考虑精简`
-      ));
+      diags.push(
+        makeDiagnostic(
+          "SIZE-001",
+          "warning",
+          node.id,
+          `${node.name} 体积 ${fmtBytes(size)}，考虑精简`,
+        ),
+      );
     }
 
     // ACTIVITY-001
     const days = meta.last_commit_days_ago;
     if (days != null && days > 365) {
-      diags.push(makeDiagnostic(
-        'ACTIVITY-001', 'critical', node.id,
-        `${node.name} 已 ${days} 天未更新，可能已停止维护`
-      ));
+      diags.push(
+        makeDiagnostic(
+          "ACTIVITY-001",
+          "critical",
+          node.id,
+          `${node.name} 已 ${days} 天未更新，可能已停止维护`,
+        ),
+      );
     } else if (days != null && days > 180) {
-      diags.push(makeDiagnostic(
-        'ACTIVITY-002', 'info', node.id,
-        `${node.name} 最近更新在 ${days} 天前`
-      ));
+      diags.push(
+        makeDiagnostic(
+          "ACTIVITY-002",
+          "info",
+          node.id,
+          `${node.name} 最近更新在 ${days} 天前`,
+        ),
+      );
     }
   }
 
@@ -362,18 +426,20 @@ function computeTransitiveSize(graph, metas) {
     return total;
   }
 
-  return graph.nodes.map(n => ({
-    node_id: n.id,
-    self_size: (metas[n.id] || {}).self_size || 0,
-    transitive_size: transitiveSize(n.id),
-  })).sort((a, b) => b.transitive_size - a.transitive_size);
+  return graph.nodes
+    .map((n) => ({
+      node_id: n.id,
+      self_size: (metas[n.id] || {}).self_size || 0,
+      transitive_size: transitiveSize(n.id),
+    }))
+    .sort((a, b) => b.transitive_size - a.transitive_size);
 }
 
 // ===== 生态统计 =====
 
 function computeEcosystemStats(graph, healthScores, metas, rootId) {
-  const depthMap = new Map(graph.nodes.map(n => [n.id, n.depth]));
-  const directDeps = graph.edges.filter(e => e.from === rootId).length;
+  const depthMap = new Map(graph.nodes.map((n) => [n.id, n.depth]));
+  const directDeps = graph.edges.filter((e) => e.from === rootId).length;
   const uniqueLicenses = new Set();
   let totalSize = 0;
   let totalDeprecated = 0;
@@ -385,14 +451,17 @@ function computeEcosystemStats(graph, healthScores, metas, rootId) {
     totalDeprecated += (meta.deprecated_apis || []).length;
   }
 
-  const avgHealth = healthScores.length > 0
-    ? Math.round(healthScores.reduce((a, b) => a + b.total, 0) / healthScores.length)
-    : 0;
+  const avgHealth =
+    healthScores.length > 0
+      ? Math.round(
+          healthScores.reduce((a, b) => a + b.total, 0) / healthScores.length,
+        )
+      : 0;
 
   return {
     total_packages: graph.nodes.length,
     direct_dependencies: directDeps,
-    max_depth: Math.max(0, ...graph.nodes.map(n => n.depth)),
+    max_depth: Math.max(0, ...graph.nodes.map((n) => n.depth)),
     total_size_bytes: totalSize,
     total_deprecated_apis: totalDeprecated,
     unique_licenses: uniqueLicenses.size,
@@ -404,9 +473,9 @@ function computeEcosystemStats(graph, healthScores, metas, rootId) {
 
 export function runJsAnalyzer(request) {
   try {
-    if (request.type === 'mod_text') {
+    if (request.type === "mod_text") {
       return analyzeSingleMod(request.mod_text);
-    } else if (request.type === 'context') {
+    } else if (request.type === "context") {
       return analyzeContext(request.context);
     }
     return { error: `unknown request type: ${request.type}` };
@@ -435,12 +504,27 @@ function analyzeSingleMod(modText) {
     if (n.id !== graph.root_id && !metas[n.id]) metas[n.id] = {};
   }
 
-  const healthScores = graph.nodes.map(n => computeHealthScore(n, metas[n.id]._mod || {}, metas[n.id]));
+  const healthScores = graph.nodes.map((n) =>
+    computeHealthScore(n, metas[n.id]._mod || {}, metas[n.id]),
+  );
   const diags = diagnose(graph, metas);
   const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5);
-  const stats = computeEcosystemStats(graph, healthScores, metas, graph.root_id);
+  const stats = computeEcosystemStats(
+    graph,
+    healthScores,
+    metas,
+    graph.root_id,
+  );
 
-  return assembleResult(graph, rootMod, healthScores, diags, sizeOffenders, stats, metas);
+  return assembleResult(
+    graph,
+    rootMod,
+    healthScores,
+    diags,
+    sizeOffenders,
+    stats,
+    metas,
+  );
 }
 
 function analyzeContext(ctx) {
@@ -466,27 +550,55 @@ function analyzeContext(ctx) {
       mod = rootMod;
     } else {
       const content = modules[n.id];
-      mod = content ? parseMod(content) : { name: n.name, version: n.version, deps: {} };
+      mod = content
+        ? parseMod(content)
+        : { name: n.name, version: n.version, deps: {} };
     }
     metas[n.id] = { ...meta, _mod: mod };
   }
 
-  const healthScores = graph.nodes.map(n => computeHealthScore(n, metas[n.id]._mod || {}, metas[n.id]));
+  const healthScores = graph.nodes.map((n) =>
+    computeHealthScore(n, metas[n.id]._mod || {}, metas[n.id]),
+  );
   const diags = diagnose(graph, metas);
   const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5);
-  const stats = computeEcosystemStats(graph, healthScores, metas, graph.root_id);
+  const stats = computeEcosystemStats(
+    graph,
+    healthScores,
+    metas,
+    graph.root_id,
+  );
 
-  return assembleResult(graph, rootMod, healthScores, diags, sizeOffenders, stats, metas);
+  return assembleResult(
+    graph,
+    rootMod,
+    healthScores,
+    diags,
+    sizeOffenders,
+    stats,
+    metas,
+  );
 }
 
-function assembleResult(graph, rootMod, healthScores, diags, sizeOffenders, stats, metas) {
-  const crit = diags.filter(d => d.severity === 'critical').length;
-  const warn = diags.filter(d => d.severity === 'warning').length;
-  const info = diags.filter(d => d.severity === 'info').length;
+function assembleResult(
+  graph,
+  rootMod,
+  healthScores,
+  diags,
+  sizeOffenders,
+  stats,
+  metas,
+) {
+  const crit = diags.filter((d) => d.severity === "critical").length;
+  const warn = diags.filter((d) => d.severity === "warning").length;
+  const info = diags.filter((d) => d.severity === "info").length;
 
-  const overallScore = healthScores.length > 0
-    ? Math.round(healthScores.reduce((a, b) => a + b.total, 0) / healthScores.length)
-    : 0;
+  const overallScore =
+    healthScores.length > 0
+      ? Math.round(
+          healthScores.reduce((a, b) => a + b.total, 0) / healthScores.length,
+        )
+      : 0;
 
   // 序列化 metas（去掉 _mod）
   const cleanMetas = {};
@@ -495,7 +607,8 @@ function assembleResult(graph, rootMod, healthScores, diags, sizeOffenders, stat
       license: meta.license || null,
       latest_version: meta.latest_version || null,
       self_size: meta.self_size || 0,
-      last_commit_days_ago: meta.last_commit_days_ago != null ? meta.last_commit_days_ago : null,
+      last_commit_days_ago:
+        meta.last_commit_days_ago != null ? meta.last_commit_days_ago : null,
       total_api_count: meta.total_api_count || 0,
       deprecated_api_count: (meta.deprecated_apis || []).length,
     };
@@ -515,6 +628,6 @@ function assembleResult(graph, rootMod, healthScores, diags, sizeOffenders, stat
     size_offenders_top5: sizeOffenders,
     node_metas: cleanMetas,
     ecosystem_stats: stats,
-    _root_mod: rootMod,  // 供前端使用，不属于 WASM 契约
+    _root_mod: rootMod, // 供前端使用，不属于 WASM 契约
   };
 }
