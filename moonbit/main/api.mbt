@@ -1,4 +1,4 @@
-/// depsight WASM API —— 浏览器可调用的依赖健康分析入口。
+﻿/// depsight WASM API —— 浏览器可调用的依赖健康分析入口。
 ///
 /// # 调用契约（与 js/js-analyzer.js 完全一致）
 ///
@@ -36,6 +36,7 @@
 
 ///|
 /// 主入口：从完整上下文运行分析，返回 JSON 字符串。
+#export_name("analyze_from_context_json")
 pub fn analyze_from_context_json(context_json : String) -> String {
   match run_analysis(context_json) {
     Ok(json) => json
@@ -45,6 +46,7 @@ pub fn analyze_from_context_json(context_json : String) -> String {
 
 ///|
 /// 便捷入口：仅分析单个 moon.mod / moon.mod.json，不递归依赖。
+#export_name("analyze_from_mod_text")
 pub fn analyze_from_mod_text(mod_text : String) -> String {
   let root = match parse_mod_text(mod_text) {
     Ok(m) => m
@@ -61,6 +63,7 @@ pub fn analyze_from_mod_text(mod_text : String) -> String {
 
 ///|
 /// 版本号（JS 侧做兼容性检查）
+#export_name("version")
 pub fn version() -> String {
   "0.6.0-wasm"
 }
@@ -260,7 +263,7 @@ fn toml_value(line : String) -> String {
 ///|
 /// 从 "pkg@1.0" 拆分（@ 取最后一个，兼容 scope 名）
 fn split_dep_name(s : String) -> (String, String) {
-  match s.rev_index_of("@") {
+  match s.rev_find("@") {
     Some(at) if at > 0 => (s[:at].to_string(), s[at+1:].to_string())
     _ => (s, "latest")
   }
@@ -284,7 +287,7 @@ fn strip_quotes(s : String) -> String {
 fn extract_brace_content(line : String) -> String? {
   match line.find("{") {
     Some(start) =>
-      match line.rev_index_of("}") {
+      match line.rev_find("}") {
         Some(end) if end > start =>
           Some(line[start+1:end].to_string())
         _ => None
@@ -298,7 +301,7 @@ fn extract_brace_content(line : String) -> String? {
 fn extract_quoted(line : String) -> String? {
   match line.find("\"") {
     Some(start) =>
-      match line.rev_index_of("\"") {
+      match line.rev_find("\"") {
         Some(end) if end > start =>
           Some(line[start+1:end].to_string())
         _ => None
@@ -427,12 +430,12 @@ fn build_shallow_graph(root : Module) -> Graph {
 
 ///|
 /// 从 context.metadata 构造 NodeMeta
-fn build_node_metas(graph : Graph, root : Module, metadata : Map[String, @json.Json]) -> Map[String, NodeMeta] {
+fn build_node_metas(graph : Graph, root : Module, metadata : Map[String, Json]) -> Map[String, NodeMeta] {
   let metas : Map[String, NodeMeta] = Map([])
 
   for node in graph.nodes {
     let meta = match metadata.get(node.id) {
-      Some(@json.Json::Object(obj)) => parse_node_meta(obj)
+      Some(Json::Object(obj)) => parse_node_meta(obj)
       _ => NodeMeta::{
         license: if node.id == graph.root_id { root.license } else { None },
         latest_version: None,
@@ -493,30 +496,30 @@ fn build_shallow_metas(graph : Graph, root : Module) -> Map[String, NodeMeta] {
 
 ///|
 /// 从 JSON Object 解析 NodeMeta
-fn parse_node_meta(obj : Map[String, @json.Json]) -> NodeMeta {
+fn parse_node_meta(obj : Map[String, Json]) -> NodeMeta {
   let license = match obj.get("license") {
-    Some(@json.Json::String(s)) => Some(s)
+    Some(Json::String(s)) => Some(s)
     _ => None
   }
   let latest_version = match obj.get("latest_version") {
-    Some(@json.Json::String(s)) => Some(s)
+    Some(Json::String(s)) => Some(s)
     _ => None
   }
   let last_commit_days_ago = match obj.get("last_commit_days_ago") {
-    Some(@json.Json::Number(n, ..)) => Some(n.to_int())
+    Some(Json::Number(n, ..)) => Some(n.to_int())
     _ => None
   }
   let self_size = match obj.get("self_size") {
-    Some(@json.Json::Number(n, ..)) => n.to_int()
+    Some(Json::Number(n, ..)) => n.to_int()
     _ => 0
   }
   let total_api_count = match obj.get("total_api_count") {
-    Some(@json.Json::Number(n, ..)) => n.to_int()
+    Some(Json::Number(n, ..)) => n.to_int()
     _ => 0
   }
   let deprecated_apis : Array[String] = []
   match obj.get("deprecated_apis") {
-    Some(@json.Json::Array(arr)) => {
+    Some(Json::Array(arr)) => {
       for item in arr {
         guard item is String(s) else { continue }
         deprecated_apis.push(s)
@@ -952,7 +955,7 @@ fn run_analysis(context_json : String) -> Result[String, String] {
   }
 
   // 4. 读 metadata
-  let metadata : Map[String, @json.Json] = Map([])
+  let metadata : Map[String, Json] = Map([])
   match ctx_obj.get("metadata") {
     Some(Object(metas)) => {
       for pair in metas {
