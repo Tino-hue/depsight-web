@@ -1,0 +1,7 @@
+# MoonBit 构建产物
+_build/
+.moon/
+
+# Python 缓存
+__pycache__/
+*.pyc
