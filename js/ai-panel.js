@@ -2,38 +2,89 @@
 // 通过调用 LLM API 生成诊断解释 + 修复建议
 // 你可以配置 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL 环境变量
 
-const DEFAULT_MODEL = 'gpt-4o-mini';
-const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
 // 从 localStorage 读取 API 配置
 function getApiConfig() {
   return {
-    apiKey: localStorage.getItem('depsight_openai_key') || '',
-    baseUrl: localStorage.getItem('depsight_openai_base') || DEFAULT_BASE_URL,
-    model: localStorage.getItem('depsight_openai_model') || DEFAULT_MODEL,
+    apiKey: localStorage.getItem("depsight_openai_key") || "",
+    baseUrl: localStorage.getItem("depsight_openai_base") || DEFAULT_BASE_URL,
+    model: localStorage.getItem("depsight_openai_model") || DEFAULT_MODEL,
   };
 }
 
+// 保存 API 配置到 localStorage
+function saveApiConfig(key, base, model) {
+  if (key) localStorage.setItem("depsight_openai_key", key);
+  else localStorage.removeItem("depsight_openai_key");
+  if (base) localStorage.setItem("depsight_openai_base", base);
+  else localStorage.removeItem("depsight_openai_base");
+  if (model) localStorage.setItem("depsight_openai_model", model);
+  else localStorage.removeItem("depsight_openai_model");
+}
+
+// 初始化设置面板：加载已存值 + 绑定保存按钮
+export function initAiSettings() {
+  const panel = document.querySelector("#ai-settings-panel");
+  const toggle = document.querySelector("#ai-settings-toggle");
+  const saveBtn = document.querySelector("#ai-settings-save");
+  const status = document.querySelector("#ai-settings-status");
+  if (!panel || !toggle || !saveBtn) return;
+
+  // 展开/收起
+  toggle.addEventListener("click", () => {
+    const isHidden = panel.classList.toggle("hidden");
+    if (!isHidden) {
+      // 展开时回填当前值
+      const cfg = getApiConfig();
+      document.querySelector("#ai-api-key").value = cfg.apiKey;
+      document.querySelector("#ai-base-url").value =
+        cfg.baseUrl === DEFAULT_BASE_URL ? "" : cfg.baseUrl;
+      document.querySelector("#ai-model").value =
+        cfg.model === DEFAULT_MODEL ? "" : cfg.model;
+    }
+  });
+
+  // 保存
+  saveBtn.addEventListener("click", () => {
+    const key = document.querySelector("#ai-api-key").value.trim();
+    const base = document.querySelector("#ai-base-url").value.trim();
+    const model = document.querySelector("#ai-model").value.trim();
+    saveApiConfig(key, base, model);
+    if (status) {
+      status.textContent = "已保存";
+      setTimeout(() => {
+        status.textContent = "";
+      }, 2000);
+    }
+  });
+}
+
 export function openAiDrawer() {
-  document.querySelector('#ai-drawer')?.classList.add('open');
+  document.querySelector("#ai-drawer")?.classList.add("open");
 }
 
 export function closeAiDrawer() {
-  document.querySelector('#ai-drawer')?.classList.remove('open');
+  document.querySelector("#ai-drawer")?.classList.remove("open");
 }
 
 // 诊断单个风险项
 export async function diagnoseRisk(state, code, nodeId) {
-  const drawer = document.querySelector('#ai-drawer');
-  const content = document.querySelector('#ai-content');
+  const drawer = document.querySelector("#ai-drawer");
+  const content = document.querySelector("#ai-content");
   if (!drawer || !content) return;
 
-  drawer.classList.add('open');
+  drawer.classList.add("open");
   content.innerHTML = '<p class="ai-hint">AI 正在分析…</p>';
 
   // 构造 prompt
-  const diag = (state.lastResult?.diagnostics || []).find(d => d.code === code && d.node_id === nodeId);
-  const health = (state.lastResult?.health_scores || []).find(h => h.node_id === nodeId);
+  const diag = (state.lastResult?.diagnostics || []).find(
+    (d) => d.code === code && d.node_id === nodeId,
+  );
+  const health = (state.lastResult?.health_scores || []).find(
+    (h) => h.node_id === nodeId,
+  );
   const meta = state.lastResult?.node_metas?.[nodeId];
   const rootMod = state.lastRootMod;
 
@@ -44,24 +95,36 @@ export async function diagnoseRisk(state, code, nodeId) {
     content.innerHTML = renderAiResponse(code, nodeId, response, diag);
   } catch (e) {
     // LLM 不可用：用规则引擎 fallback
-    const fallbackResponse = ruleBasedDiagnosis(code, nodeId, diag, health, meta);
-    content.innerHTML = renderAiResponse(code, nodeId, fallbackResponse, diag, true);
+    const fallbackResponse = ruleBasedDiagnosis(
+      code,
+      nodeId,
+      diag,
+      health,
+      meta,
+    );
+    content.innerHTML = renderAiResponse(
+      code,
+      nodeId,
+      fallbackResponse,
+      diag,
+      true,
+    );
   }
 }
 
 // 全量诊断
 export async function diagnoseAll(state) {
-  const drawer = document.querySelector('#ai-drawer');
-  const content = document.querySelector('#ai-content');
+  const drawer = document.querySelector("#ai-drawer");
+  const content = document.querySelector("#ai-content");
   if (!drawer || !content) return;
 
-  drawer.classList.add('open');
+  drawer.classList.add("open");
   content.innerHTML = '<p class="ai-hint">AI 正在生成整体诊断报告…</p>';
 
   const prompt = buildFullReportPrompt(state);
   try {
     const response = await callLLM(prompt);
-    content.innerHTML = renderAiResponse('整体诊断', '全部依赖', response);
+    content.innerHTML = renderAiResponse("整体诊断", "全部依赖", response);
   } catch (e) {
     content.innerHTML = `<div class="ai-section"><div class="ai-section-title">AI 不可用</div>
       <div class="ai-section-body">请配置 OpenAI API Key。当前使用规则引擎 fallback：<br><br>${escapeHtml(e.message)}</div></div>`;
@@ -70,17 +133,17 @@ export async function diagnoseAll(state) {
 
 // 生成修复 PR 描述
 export async function generatePrDescription(state) {
-  const drawer = document.querySelector('#ai-drawer');
-  const content = document.querySelector('#ai-content');
+  const drawer = document.querySelector("#ai-drawer");
+  const content = document.querySelector("#ai-content");
   if (!drawer || !content) return;
 
-  drawer.classList.add('open');
+  drawer.classList.add("open");
   content.innerHTML = '<p class="ai-hint">AI 正在生成 PR 描述…</p>';
 
   const prompt = buildPrPrompt(state);
   try {
     const response = await callLLM(prompt);
-    content.innerHTML = renderAiResponse('PR 描述', '自动修复建议', response);
+    content.innerHTML = renderAiResponse("PR 描述", "自动修复建议", response);
   } catch (e) {
     content.innerHTML = `<div class="ai-section"><div class="ai-section-title">AI 不可用</div>
       <div class="ai-section-body">${escapeHtml(e.message)}</div></div>`;
@@ -91,20 +154,26 @@ export async function generatePrDescription(state) {
 async function callLLM(prompt) {
   const config = getApiConfig();
   if (!config.apiKey) {
-    throw new Error('未配置 OpenAI API Key，请在浏览器 localStorage 设置 depsight_openai_key');
+    throw new Error(
+      "未配置 OpenAI API Key，请在浏览器 localStorage 设置 depsight_openai_key",
+    );
   }
 
   const resp = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
       model: config.model,
       messages: [
-        { role: 'system', content: '你是 MoonBit 依赖健康检测专家。用中文回答，提供具体可执行的修复建议。' },
-        { role: 'user', content: prompt },
+        {
+          role: "system",
+          content:
+            "你是 MoonBit 依赖健康检测专家。用中文回答，提供具体可执行的修复建议。",
+        },
+        { role: "user", content: prompt },
       ],
       temperature: 0.3,
       max_tokens: 1500,
@@ -117,7 +186,7 @@ async function callLLM(prompt) {
   }
 
   const data = await resp.json();
-  return data.choices?.[0]?.message?.content || '';
+  return data.choices?.[0]?.message?.content || "";
 }
 
 // 构造诊断 prompt
@@ -126,10 +195,10 @@ function buildDiagnosePrompt(code, nodeId, diag, health, meta, rootMod) {
 
 **风险代码**: ${code}
 **受影响包**: ${nodeId}
-**风险详情**: ${diag?.message || '未知'}
-**健康分**: ${health ? health.total + '/100 (新鲜度:' + health.freshness + ' 合规:' + health.compliance + ' 废弃:' + health.deprecated_density + ' 大小:' + health.size_reasonableness + ' 活跃:' + health.activity + ')' : '未知'}
-**包元数据**: ${meta ? `许可证=${meta.license || '未声明'}, 最新版本=${meta.latest_version || '未知'}, 体积=${meta.self_size || 0}字节, 最近提交=${meta.last_commit_days_ago || '未知'}天前` : '未知'}
-**根项目**: ${rootMod ? `${rootMod.name}@${rootMod.version}` : '未知'}
+**风险详情**: ${diag?.message || "未知"}
+**健康分**: ${health ? health.total + "/100 (新鲜度:" + health.freshness + " 合规:" + health.compliance + " 废弃:" + health.deprecated_density + " 大小:" + health.size_reasonableness + " 活跃:" + health.activity + ")" : "未知"}
+**包元数据**: ${meta ? `许可证=${meta.license || "未声明"}, 最新版本=${meta.latest_version || "未知"}, 体积=${meta.self_size || 0}字节, 最近提交=${meta.last_commit_days_ago || "未知"}天前` : "未知"}
+**根项目**: ${rootMod ? `${rootMod.name}@${rootMod.version}` : "未知"}
 
 请提供：
 1. 风险原因分析（为什么这是个问题）
@@ -143,7 +212,7 @@ function buildDiagnosePrompt(code, nodeId, diag, health, meta, rootMod) {
 // 构造全量报告 prompt
 function buildFullReportPrompt(state) {
   const r = state.lastResult;
-  if (!r) return '暂无分析数据';
+  if (!r) return "暂无分析数据";
   return `为以下 MoonBit 项目生成完整的依赖健康诊断报告：
 
 **项目**: ${state.lastRootMod?.name}@${state.lastRootMod?.version}
@@ -154,7 +223,7 @@ function buildFullReportPrompt(state) {
 ${JSON.stringify(r.health_scores, null, 2)}
 
 **诊断列表**:
-${r.diagnostics.map(d => `- [${d.severity}] ${d.code}: ${d.message}`).join('\n')}
+${r.diagnostics.map((d) => `- [${d.severity}] ${d.code}: ${d.message}`).join("\n")}
 
 **生态统计**:
 ${JSON.stringify(r.ecosystem_stats, null, 2)}
@@ -171,13 +240,15 @@ ${JSON.stringify(r.ecosystem_stats, null, 2)}
 // 构造 PR prompt
 function buildPrPrompt(state) {
   const r = state.lastResult;
-  if (!r) return '暂无分析数据';
-  const fixes = r.diagnostics.filter(d => d.severity === 'critical' || d.severity === 'warning');
+  if (!r) return "暂无分析数据";
+  const fixes = r.diagnostics.filter(
+    (d) => d.severity === "critical" || d.severity === "warning",
+  );
   return `根据以下 MoonBit 依赖健康检测结果，生成一个 PR（Pull Request）描述：
 
 **项目**: ${state.lastRootMod?.name}@${state.lastRootMod?.version}
 **需要修复的问题**:
-${fixes.map(d => `- [${d.severity}] ${d.code}: ${d.message}`).join('\n')}
+${fixes.map((d) => `- [${d.severity}] ${d.code}: ${d.message}`).join("\n")}
 
 请生成：
 1. PR 标题
@@ -191,9 +262,9 @@ ${fixes.map(d => `- [${d.severity}] ${d.code}: ${d.message}`).join('\n')}
 // 规则引擎 fallback（LLM 不可用时）
 function ruleBasedDiagnosis(code, nodeId, diag, health, meta) {
   const rules = {
-    'OUTDATED-001': () => {
-      const latest = meta?.latest_version || '最新版本';
-      const cur = nodeId.split('@')[1] || '当前版本';
+    "OUTDATED-001": () => {
+      const latest = meta?.latest_version || "最新版本";
+      const cur = nodeId.split("@")[1] || "当前版本";
       return `## 风险原因
 该包当前版本 ${cur} 已过时，最新版本为 ${latest}。
 
@@ -205,7 +276,7 @@ function ruleBasedDiagnosis(code, nodeId, diag, health, meta) {
 ## 修复建议
 在 moon.mod 中更新版本号：
 \`\`\`toml
-import { "${nodeId.split('@')[0]}@${latest}" }
+import { "${nodeId.split("@")[0]}@${latest}" }
 \`\`\`
 
 然后运行 \`moon update\` 更新依赖。
@@ -213,7 +284,7 @@ import { "${nodeId.split('@')[0]}@${latest}" }
 ## 替代方案
 如果该包已停止维护，考虑寻找社区推荐的替代包。`;
     },
-    'LICENSE-001': () => `## 风险原因
+    "LICENSE-001": () => `## 风险原因
 该包未声明许可证，法律风险较高。
 
 ## 影响范围
@@ -225,8 +296,8 @@ import { "${nodeId.split('@')[0]}@${latest}" }
 
 ## 替代方案
 搜索 mooncakes.io 上同类别有 MIT/Apache-2.0 许可证的包。`,
-    'LICENSE-002': () => `## 风险原因
-该包使用 ${meta?.license || 'copyleft'} 许可证，具有传染性。
+    "LICENSE-002": () => `## 风险原因
+该包使用 ${meta?.license || "copyleft"} 许可证，具有传染性。
 
 ## 影响范围
 - 你的项目可能需要开源
@@ -238,8 +309,8 @@ import { "${nodeId.split('@')[0]}@${latest}" }
 
 ## 替代方案
 寻找使用 MIT/Apache-2.0 的同类包。`,
-    'DEPRECATED-001': () => `## 风险原因
-该包含 ${meta?.deprecated_api_count || '若干'} 个废弃 API。
+    "DEPRECATED-001": () => `## 风险原因
+该包含 ${meta?.deprecated_api_count || "若干"} 个废弃 API。
 
 ## 影响范围
 - 未来版本可能移除这些 API
@@ -250,8 +321,8 @@ import { "${nodeId.split('@')[0]}@${latest}" }
 
 ## 替代方案
 如果废弃 API 过多，考虑更换包。`,
-    'SIZE-001': () => `## 风险原因
-该包体积较大（${meta?.self_size || '未知'} 字节），影响编译和分发。
+    "SIZE-001": () => `## 风险原因
+该包体积较大（${meta?.self_size || "未知"} 字节），影响编译和分发。
 
 ## 影响范围
 - 增加编译时间
@@ -264,8 +335,8 @@ import { "${nodeId.split('@')[0]}@${latest}" }
 
 ## 替代方案
 寻找更轻量的替代包。`,
-    'ACTIVITY-001': () => `## 风险原因
-该包已 ${meta?.last_commit_days_ago || '很长'} 天未更新，可能已停止维护。
+    "ACTIVITY-001": () => `## 风险原因
+该包已 ${meta?.last_commit_days_ago || "很长"} 天未更新，可能已停止维护。
 
 ## 影响范围
 - 无法获得 bug 修复
@@ -277,8 +348,8 @@ import { "${nodeId.split('@')[0]}@${latest}" }
 
 ## 替代方案
 如果自己维护成本低，可以 fork 自行维护。`,
-    'ACTIVITY-002': () => `## 风险原因
-该包最近更新在 ${meta?.last_commit_days_ago || '较长'} 天前，活跃度较低。
+    "ACTIVITY-002": () => `## 风险原因
+该包最近更新在 ${meta?.last_commit_days_ago || "较长"} 天前，活跃度较低。
 
 ## 影响范围
 - 响应 issue 较慢
@@ -295,7 +366,7 @@ import { "${nodeId.split('@')[0]}@${latest}" }
   const rule = rules[code];
   if (rule) return rule();
   return `## 风险详情
-${diag?.message || '未知风险'}
+${diag?.message || "未知风险"}
 
 ## 修复建议
 请查看 depsight 文档了解该风险代码的含义。`;
@@ -305,7 +376,7 @@ ${diag?.message || '未知风险'}
 function renderAiResponse(code, nodeId, response, diag, isFallback = false) {
   const formatted = formatMarkdownLite(response);
   return `
-    ${isFallback ? '<div class="ai-section"><div class="ai-section-title">⚠️ LLM 不可用 · 规则引擎 fallback</div></div>' : ''}
+    ${isFallback ? '<div class="ai-section"><div class="ai-section-title">⚠️ LLM 不可用 · 规则引擎 fallback</div></div>' : ""}
     <div class="ai-section">
       <div class="ai-section-title">诊断对象</div>
       <div class="ai-section-body">
@@ -316,38 +387,56 @@ function renderAiResponse(code, nodeId, response, diag, isFallback = false) {
       <div class="ai-section-title">AI 分析</div>
       <div class="ai-section-body">${formatted}</div>
     </div>
-    ${diag ? `<div class="ai-section">
+    ${
+      diag
+        ? `<div class="ai-section">
       <div class="ai-section-title">原始诊断</div>
       <div class="ai-section-body" style="color:var(--text-muted);font-size:12px">${escapeHtml(diag.message)}</div>
-    </div>` : ''}
+    </div>`
+        : ""
+    }
   `;
 }
 
 // 轻量 markdown 格式化（不引入第三方库）
 function formatMarkdownLite(md) {
-  if (!md) return '';
-  return escapeHtml(md)
-    // 代码块
-    .replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
-      return `<div class="ai-code-block">${code.trim()}</div>`;
-    })
-    // 行内代码
-    .replace(/`([^`\n]+)`/g, '<code style="background:var(--bg-panel-2);padding:2px 6px;border-radius:3px;font-family:monospace;font-size:12px">$1</code>')
-    // 标题
-    .replace(/^### (.+)$/gm, '<strong style="color:var(--accent);display:block;margin-top:12px">$1</strong>')
-    .replace(/^## (.+)$/gm, '<strong style="color:var(--accent);display:block;margin-top:14px;font-size:14px">$1</strong>')
-    .replace(/^# (.+)$/gm, '<strong style="color:var(--accent);display:block;margin-top:16px;font-size:15px">$1</strong>')
-    // 列表
-    .replace(/^\- (.+)$/gm, '<div style="padding-left:16px">• $1</div>')
-    // 加粗
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    // 换行
-    .replace(/\n\n/g, '<br><br>')
-    .replace(/\n/g, '<br>');
+  if (!md) return "";
+  return (
+    escapeHtml(md)
+      // 代码块
+      .replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
+        return `<div class="ai-code-block">${code.trim()}</div>`;
+      })
+      // 行内代码
+      .replace(
+        /`([^`\n]+)`/g,
+        '<code style="background:var(--bg-panel-2);padding:2px 6px;border-radius:3px;font-family:monospace;font-size:12px">$1</code>',
+      )
+      // 标题
+      .replace(
+        /^### (.+)$/gm,
+        '<strong style="color:var(--accent);display:block;margin-top:12px">$1</strong>',
+      )
+      .replace(
+        /^## (.+)$/gm,
+        '<strong style="color:var(--accent);display:block;margin-top:14px;font-size:14px">$1</strong>',
+      )
+      .replace(
+        /^# (.+)$/gm,
+        '<strong style="color:var(--accent);display:block;margin-top:16px;font-size:15px">$1</strong>',
+      )
+      // 列表
+      .replace(/^\- (.+)$/gm, '<div style="padding-left:16px">• $1</div>')
+      // 加粗
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      // 换行
+      .replace(/\n\n/g, "<br><br>")
+      .replace(/\n/g, "<br>")
+  );
 }
 
 function escapeHtml(s) {
-  const div = document.createElement('div');
+  const div = document.createElement("div");
   div.textContent = s;
   return div.innerHTML;
 }
@@ -355,7 +444,7 @@ function escapeHtml(s) {
 // 绑定到 window 供 dashboard 的 onclick 调用
 window.__ai_diagnose = (code, nodeId) => {
   // 延迟 import 避免循环依赖
-  import('./main.js').then(m => {
+  import("./main.js").then((m) => {
     diagnoseRisk(m.state, code, nodeId);
   });
 };

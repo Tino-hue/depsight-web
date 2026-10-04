@@ -8,9 +8,14 @@ import {
   focusNode,
   clearHighlights,
 } from "./graph3d.js";
-import { renderTrends } from "./trends.js";
+import { renderTrends, recordTrend } from "./trends.js";
 import { renderEcosystem } from "./ecosystem.js";
-import { openAiDrawer } from "./ai-panel.js";
+import {
+  openAiDrawer,
+  diagnoseAll,
+  generatePrDescription,
+  initAiSettings,
+} from "./ai-panel.js";
 import { loadDemoContext } from "./demo-data.js";
 import { fetchPackageContext } from "./fetcher.js";
 
@@ -49,6 +54,9 @@ async function boot() {
   bindNav();
   bindInputTabs();
   bindButtons();
+
+  // AI 设置面板
+  initAiSettings();
 
   // 初始视图
   switchView("analyze");
@@ -116,6 +124,10 @@ function bindButtons() {
   $("#ai-toggle").addEventListener("click", () => {
     if (state.lastResult) $("#ai-drawer").classList.add("open");
   });
+  $("#ai-diagnose-all").addEventListener("click", () => diagnoseAll(state));
+  $("#ai-generate-pr").addEventListener("click", () =>
+    generatePrDescription(state),
+  );
   $("#graph-reset-view").addEventListener("click", () => {
     // 由 graph3d 模块导出
     clearHighlights();
@@ -188,6 +200,7 @@ async function onAnalyze() {
     state.lastGraph = result.graph;
     state.lastRootMod = result._root_mod;
 
+    recordTrend(state, result);
     renderDashboard(result);
     $("#result-panel").classList.remove("hidden");
     statusEl.textContent = `分析完成：${result.node_count} 个节点`;
@@ -212,6 +225,7 @@ async function onAnalyzeOffline() {
   state.lastResult = result;
   state.lastGraph = result.graph;
   state.lastRootMod = result._root_mod;
+  recordTrend(state, result);
   renderDashboard(result);
   $("#result-panel").classList.remove("hidden");
   statusEl.textContent = `离线分析完成（示例数据）`;
@@ -227,6 +241,7 @@ async function onLoadDemo() {
   state.lastResult = result;
   state.lastGraph = result.graph;
   state.lastRootMod = result._root_mod;
+  recordTrend(state, result);
   renderDashboard(result);
   $("#result-panel").classList.remove("hidden");
   statusEl.textContent = "示例数据已加载";

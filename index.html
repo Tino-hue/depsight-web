@@ -217,6 +217,43 @@
           <h3>AI 智能诊断</h3>
           <button id="ai-close" class="ai-close">×</button>
         </div>
+        <div class="ai-drawer-actions">
+          <button id="ai-diagnose-all" class="btn btn-sm">整体诊断报告</button>
+          <button id="ai-generate-pr" class="btn btn-sm">生成修复 PR</button>
+          <button id="ai-settings-toggle" class="btn btn-sm">API 设置</button>
+        </div>
+        <div id="ai-settings-panel" class="ai-settings-panel hidden">
+          <div class="ai-field">
+            <label for="ai-api-key">API Key</label>
+            <input
+              type="password"
+              id="ai-api-key"
+              placeholder="sk-..."
+              autocomplete="off"
+            />
+          </div>
+          <div class="ai-field">
+            <label for="ai-base-url">Base URL</label>
+            <input
+              type="text"
+              id="ai-base-url"
+              placeholder="https://api.openai.com/v1"
+            />
+          </div>
+          <div class="ai-field">
+            <label for="ai-model">模型</label>
+            <input type="text" id="ai-model" placeholder="gpt-4o-mini" />
+          </div>
+          <div class="ai-settings-actions">
+            <button id="ai-settings-save" class="btn btn-primary btn-sm">
+              保存
+            </button>
+            <span id="ai-settings-status"></span>
+          </div>
+          <p class="ai-settings-note">
+            Key 仅保存在浏览器 localStorage，不会上传到任何服务器。
+          </p>
+        </div>
         <div id="ai-content" class="ai-content">
           <p class="ai-hint">运行分析后，点击任意风险项的「AI 诊断」按钮</p>
         </div>

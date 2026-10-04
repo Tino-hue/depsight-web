@@ -831,6 +831,67 @@ body {
   background: var(--accent-hover);
 }
 
+/* AI 抽屉操作按钮行 */
+.ai-drawer-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+/* AI 设置面板 */
+.ai-settings-panel {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.ai-settings-panel.hidden {
+  display: none;
+}
+.ai-field {
+  margin-bottom: 12px;
+}
+.ai-field label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ai-field input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-panel-2, var(--bg-panel));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text);
+  font-size: 13px;
+  font-family: monospace;
+  box-sizing: border-box;
+}
+.ai-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ai-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+#ai-settings-status {
+  font-size: 12px;
+  color: var(--success);
+}
+.ai-settings-note {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 10px;
+  line-height: 1.4;
+}
+
 /* ===== 滚动条 ===== */
 ::-webkit-scrollbar {
   width: 8px;
