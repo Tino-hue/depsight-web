@@ -109,6 +109,7 @@ function bindButtons() {
   $("#analyze-offline-btn").addEventListener("click", onAnalyzeOffline);
   $("#load-demo-btn").addEventListener("click", onLoadDemo);
   $("#load-package-btn").addEventListener("click", onLoadPackage);
+  $("#moon-mod-file").addEventListener("change", onModFileSelected);
   $("#ai-close").addEventListener("click", () =>
     $("#ai-drawer").classList.remove("open"),
   );
@@ -120,6 +121,23 @@ function bindButtons() {
     clearHighlights();
     focusNode(null);
   });
+}
+
+// ===== moon.mod 文件上传 =====
+function onModFileSelected(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const statusEl = $("#analyze-status");
+  const reader = new FileReader();
+  reader.onload = () => {
+    $("#moon-mod-input").value = String(reader.result || "");
+    $("#file-upload-name").textContent = `已加载：${file.name}`;
+    statusEl.textContent = `已读取文件 ${file.name}，点击「开始分析」`;
+  };
+  reader.onerror = () => {
+    statusEl.textContent = `读取文件失败：${file.name}`;
+  };
+  reader.readAsText(file);
 }
 
 // ===== 分析入口 =====

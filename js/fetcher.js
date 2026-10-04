@@ -1,13 +1,13 @@
 // mooncakes.io 数据拉取器
 // 从 mooncakes.io API 递归拉取依赖的 moon.mod.json
 
-const MOONCAKES_BASE = 'https://mooncakes.io';
+const MOONCAKES_BASE = "https://mooncakes.io";
 
 // 拉取单个包的 moon.mod.json
 async function fetchModJson(name, version = null) {
   // URL 形如 https://mooncakes.io/api/v1/packages/{name}/{version}/moon.mod.json
   // 不带 version 则取 latest
-  const ver = version || 'latest';
+  const ver = version || "latest";
   const url = `${MOONCAKES_BASE}/api/v1/packages/${encodeURIComponent(name)}/${encodeURIComponent(ver)}/moon.mod.json`;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${name}@${ver}`);
@@ -36,8 +36,8 @@ export async function fetchPackageContext(name, version = null, maxDepth = 3) {
   if (!rootMod) throw new Error(`Failed to parse moon.mod.json for ${name}`);
 
   // 2. BFS 收集依赖
-  const modules = {};   // "name@version" -> moon.mod.json text
-  const metadata = {};  // "name@version" -> meta
+  const modules = {}; // "name@version" -> moon.mod.json text
+  const metadata = {}; // "name@version" -> meta
   const visited = new Set();
 
   // 根节点
@@ -80,7 +80,11 @@ export async function fetchPackageContext(name, version = null, maxDepth = 3) {
             license: depMod.license || null,
           };
         }
-        queue.push({ name: depName, version: depVersion, depth: cur.depth + 1 });
+        queue.push({
+          name: depName,
+          version: depVersion,
+          depth: cur.depth + 1,
+        });
       } catch {
         // 拉不到就跳过
         console.warn(`[fetcher] Failed to fetch ${depName}@${depVersion}`);
@@ -105,7 +109,7 @@ async function enrichMetadata(rootMod, modules, metadata) {
   const allIds = Object.keys(metadata);
 
   for (const id of allIds) {
-    const [name, version] = id.split('@');
+    const [name, version] = id.split("@");
     if (name === rootMod.name) continue;
 
     // 拉 mooncakes package info 获取 latest_version
@@ -143,7 +147,9 @@ async function fetchLastCommitDays(repoUrl) {
     if (!resp.ok) return null;
     const data = await resp.json();
     if (data.pushed_at) {
-      const days = Math.floor((Date.now() - new Date(data.pushed_at)) / (1000 * 60 * 60 * 24));
+      const days = Math.floor(
+        (Date.now() - new Date(data.pushed_at)) / (1000 * 60 * 60 * 24),
+      );
       return days;
     }
   } catch {
@@ -157,8 +163,8 @@ function parseModJsonSafe(text) {
   try {
     const obj = JSON.parse(text);
     return {
-      name: obj.name || 'unknown',
-      version: obj.version || '0.0.0',
+      name: obj.name || "unknown",
+      version: obj.version || "0.0.0",
       license: obj.license || null,
       deps: obj.deps || {},
     };

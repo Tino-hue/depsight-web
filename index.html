@@ -57,8 +57,22 @@
                     rows="10"
                     placeholder='粘贴 moon.mod 内容，例如：&#10;&#10;name = "my/app"&#10;version = "1.0.0"&#10;&#10;import { "moonbitlang/core" }'
                   ></textarea>
+                  <div class="file-upload-row">
+                    <label for="moon-mod-file" class="btn btn-secondary">
+                      上传 moon.mod 文件
+                    </label>
+                    <input
+                      type="file"
+                      id="moon-mod-file"
+                      accept=".mod,.txt,.toml,text/plain"
+                    />
+                    <span id="file-upload-name" class="file-upload-name"></span>
+                  </div>
                 </div>
                 <div id="input-package" class="input-pane">
+                  <p class="package-hint">
+                    mooncakes.io 暂不提供公开搜索 API，请输入完整包名拉取分析
+                  </p>
                   <input
                     type="text"
                     id="package-name"
