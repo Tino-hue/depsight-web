@@ -3,18 +3,19 @@
 // 颜色 = 健康分（绿 ≥80 / 黄 ≥60 / 红 <60）
 // 连线粗细 = 依赖紧深度（depth 越小越粗）
 
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 let scene, camera, renderer, controls;
 let container;
-let nodeMeshes = [];       // [{ mesh, node, health }]
-let edgeLines = [];        // [{ line, from, to }]
+let nodeGroup, edgeGroup; // 节点和连线的 Group
+let nodeMeshes = []; // [{ mesh, node, health }]
+let edgeLines = []; // [{ line, from, to }]
 let highlightNodes = new Set();
 let selectedNode = null;
 let raycaster, mouse;
 let animationId = null;
-let pulseNodes = [];       // 问题包（发光脉动）
+let pulseNodes = []; // 问题包（发光脉动）
 
 // 初始化
 export function initGraph3D(selector) {
@@ -56,9 +57,9 @@ export function initGraph3D(selector) {
   mouse = new THREE.Vector2();
 
   // 事件
-  renderer.domElement.addEventListener('click', onCanvasClick);
-  renderer.domElement.addEventListener('mousemove', onCanvasMouseMove);
-  window.addEventListener('resize', onWindowResize);
+  renderer.domElement.addEventListener("click", onCanvasClick);
+  renderer.domElement.addEventListener("mousemove", onCanvasMouseMove);
+  window.addEventListener("resize", onWindowResize);
 
   // 动画循环
   animate();
@@ -66,19 +67,32 @@ export function initGraph3D(selector) {
 
 // 更新数据
 export function updateGraphData(graphData, analysisResult) {
-  if (!scene) return;
+  if (!scene) {
+    console.log("[graph3d] scene not initialized");
+    return;
+  }
 
   // 清空旧数据
   clearGraph();
 
-  if (!graphData || !graphData.nodes) return;
+  if (!graphData || !graphData.nodes) {
+    console.log("[graph3d] no graph data", graphData);
+    return;
+  }
 
   const { nodes, edges, root_id } = graphData;
+  console.log(
+    "[graph3d] updating with",
+    nodes.length,
+    "nodes,",
+    edges.length,
+    "edges",
+  );
   const healthMap = new Map();
   const metaMap = new Map();
 
   if (analysisResult) {
-    for (const h of (analysisResult.health_scores || [])) {
+    for (const h of analysisResult.health_scores || []) {
       healthMap.set(h.node_id, h);
     }
     for (const [id, m] of Object.entries(analysisResult.node_metas || {})) {
@@ -93,7 +107,7 @@ export function updateGraphData(graphData, analysisResult) {
   }
 
   // 创建节点
-  const nodeGroup = new THREE.Group();
+  nodeGroup = new THREE.Group();
   const nodePositions = new Map();
 
   for (const node of nodes) {
@@ -105,7 +119,8 @@ export function updateGraphData(graphData, analysisResult) {
 
     // 大小：基础半径 3 + children 加成 + size 加成
     const sizeBonus = Math.min(childCount * 0.3, 3);
-    const sizeBonus2 = selfSize > 0 ? Math.min(Math.log10(selfSize / 1000 + 1), 3) : 0;
+    const sizeBonus2 =
+      selfSize > 0 ? Math.min(Math.log10(selfSize / 1000 + 1), 3) : 0;
     const radius = 3 + sizeBonus + sizeBonus2;
 
     // 颜色：健康分
@@ -135,11 +150,15 @@ export function updateGraphData(graphData, analysisResult) {
 
     // 问题包：score < 50 加入脉动列表
     if (score < 50) {
-      pulseNodes.push({ mesh, baseRadius: radius, phase: Math.random() * Math.PI * 2 });
+      pulseNodes.push({
+        mesh,
+        baseRadius: radius,
+        phase: Math.random() * Math.PI * 2,
+      });
     }
 
     // 标签（精灵）
-    const label = createTextSprite(node.name.split('/').pop() || node.name);
+    const label = createTextSprite(node.name.split("/").pop() || node.name);
     label.position.copy(pos).add(new THREE.Vector3(0, radius + 2, 0));
     nodeGroup.add(label);
   }
@@ -147,7 +166,7 @@ export function updateGraphData(graphData, analysisResult) {
   scene.add(nodeGroup);
 
   // 创建边
-  const edgeGroup = new THREE.Group();
+  edgeGroup = new THREE.Group();
   for (const edge of edges) {
     const fromPos = nodePositions.get(edge.from);
     const toPos = nodePositions.get(edge.to);
@@ -173,12 +192,20 @@ export function updateGraphData(graphData, analysisResult) {
 
   // 调整相机视角
   fitCameraToGraph(nodes.length);
+  console.log(
+    "[graph3d] scene children:",
+    scene.children.length,
+    "nodeGroup:",
+    nodeGroup?.children?.length,
+    "edgeGroup:",
+    edgeGroup?.children?.length,
+  );
 }
 
 // 计算节点位置（简化力导向：按 depth 分层球面分布）
 function computeNodePosition(node, totalNodes) {
   const depth = node.depth || 0;
-  const angle = (Math.random() * Math.PI * 2);
+  const angle = Math.random() * Math.PI * 2;
   const phi = Math.acos(2 * Math.random() - 1);
 
   // 按 depth 缩放半径
@@ -202,22 +229,26 @@ function getHealthColor(score) {
 
 // 创建文字精灵
 function createTextSprite(text) {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
   canvas.width = 256;
   canvas.height = 64;
 
-  ctx.fillStyle = 'rgba(0,0,0,0)';
+  ctx.fillStyle = "rgba(0,0,0,0)";
   ctx.fillRect(0, 0, 256, 64);
 
-  ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.fillStyle = '#e2e8f0';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
+  ctx.font =
+    'bold 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillStyle = "#e2e8f0";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
   ctx.fillText(text, 128, 32);
 
   const texture = new THREE.CanvasTexture(canvas);
-  const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+  });
   const sprite = new THREE.Sprite(material);
   sprite.scale.set(12, 3, 1);
 
@@ -234,7 +265,7 @@ function fitCameraToGraph(nodeCount) {
 
 // 获取节点 depth
 function getNodeDepth(nodeId, nodes) {
-  const n = nodes.find(n => n.id === nodeId);
+  const n = nodes.find((n) => n.id === nodeId);
   return n ? n.depth : 0;
 }
 
@@ -258,8 +289,18 @@ function clearGraph() {
 }
 
 // 动画循环
+let frameCount = 0;
 function animate() {
   animationId = requestAnimationFrame(animate);
+  frameCount++;
+  if (frameCount === 1 || frameCount % 60 === 0) {
+    console.log(
+      "[graph3d] animate frame",
+      frameCount,
+      "scene children:",
+      scene?.children?.length,
+    );
+  }
 
   // 脉动动画（问题包发光）
   const t = Date.now() * 0.003;
@@ -288,7 +329,7 @@ function onCanvasClick(event) {
   mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
   raycaster.setFromCamera(mouse, camera);
-  const meshes = nodeMeshes.map(n => n.mesh);
+  const meshes = nodeMeshes.map((n) => n.mesh);
   const intersects = raycaster.intersectObjects(meshes, false);
 
   if (intersects.length > 0) {
@@ -308,10 +349,10 @@ function onCanvasMouseMove(event) {
   mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
   raycaster.setFromCamera(mouse, camera);
-  const meshes = nodeMeshes.map(n => n.mesh);
+  const meshes = nodeMeshes.map((n) => n.mesh);
   const intersects = raycaster.intersectObjects(meshes, false);
 
-  renderer.domElement.style.cursor = intersects.length > 0 ? 'pointer' : 'grab';
+  renderer.domElement.style.cursor = intersects.length > 0 ? "pointer" : "grab";
 }
 
 // 选中节点
@@ -328,14 +369,14 @@ function selectNode(node, health, meta) {
   }
 
   // 显示详情面板
-  const detailEl = document.querySelector('#graph-node-detail');
+  const detailEl = document.querySelector("#graph-node-detail");
   if (detailEl) {
-    detailEl.classList.remove('hidden');
+    detailEl.classList.remove("hidden");
     detailEl.innerHTML = renderNodeDetail(node, health, meta);
   }
 
   // 更新工具栏信息
-  const infoEl = document.querySelector('#graph-selected-info');
+  const infoEl = document.querySelector("#graph-selected-info");
   if (infoEl) {
     infoEl.textContent = `${node.name}@${node.version} · 健康分 ${health}`;
   }
@@ -343,8 +384,13 @@ function selectNode(node, health, meta) {
 
 // 渲染节点详情
 function renderNodeDetail(node, health, meta) {
-  const healthClass = health >= 80 ? 'gnd-health-good' : health >= 60 ? 'gnd-health-mid' : 'gnd-health-bad';
-  const healthLabel = health >= 80 ? '健康' : health >= 60 ? '警告' : '危险';
+  const healthClass =
+    health >= 80
+      ? "gnd-health-good"
+      : health >= 60
+        ? "gnd-health-mid"
+        : "gnd-health-bad";
+  const healthLabel = health >= 80 ? "健康" : health >= 60 ? "警告" : "危险";
   return `
     <h4>${escapeHtml(node.id)}</h4>
     <div class="graph-node-detail-row">
@@ -355,10 +401,12 @@ function renderNodeDetail(node, health, meta) {
       <span class="graph-node-detail-label">深度</span>
       <span class="graph-node-detail-value">${node.depth}</span>
     </div>
-    ${meta ? `
+    ${
+      meta
+        ? `
     <div class="graph-node-detail-row">
       <span class="graph-node-detail-label">许可证</span>
-      <span class="graph-node-detail-value">${escapeHtml(meta.license || '未声明')}</span>
+      <span class="graph-node-detail-value">${escapeHtml(meta.license || "未声明")}</span>
     </div>
     <div class="graph-node-detail-row">
       <span class="graph-node-detail-label">最新版本</span>
@@ -368,14 +416,18 @@ function renderNodeDetail(node, health, meta) {
       <span class="graph-node-detail-label">体积</span>
       <span class="graph-node-detail-value">${formatBytes(meta.self_size || 0)}</span>
     </div>
-    ` : ''}
+    `
+        : ""
+    }
   `;
 }
 
 // 搜索定位
 export function focusNode(nodeId) {
   if (!nodeId) return;
-  const found = nodeMeshes.find(n => n.node.id === nodeId || n.node.name.includes(nodeId));
+  const found = nodeMeshes.find(
+    (n) => n.node.id === nodeId || n.node.name.includes(nodeId),
+  );
   if (found) {
     selectNode(found.node, found.health, found.meta);
     // 相机聚焦
@@ -402,7 +454,7 @@ export function highlightDependencyPath(fromId) {
   while (queue.length > 0) {
     const cur = queue.shift();
     highlightNodes.add(cur);
-    for (const next of (adj.get(cur) || [])) {
+    for (const next of adj.get(cur) || []) {
       if (!visited.has(next)) {
         visited.add(next);
         queue.push(next);
@@ -417,10 +469,10 @@ export function clearHighlights() {
   for (const { mesh } of nodeMeshes) {
     mesh.material.emissiveIntensity = 0.1;
   }
-  const detailEl = document.querySelector('#graph-node-detail');
-  if (detailEl) detailEl.classList.add('hidden');
-  const infoEl = document.querySelector('#graph-selected-info');
-  if (infoEl) infoEl.textContent = '';
+  const detailEl = document.querySelector("#graph-node-detail");
+  if (detailEl) detailEl.classList.add("hidden");
+  const infoEl = document.querySelector("#graph-selected-info");
+  if (infoEl) infoEl.textContent = "";
 }
 
 // 窗口缩放
@@ -441,7 +493,7 @@ function formatBytes(n) {
 }
 
 function escapeHtml(s) {
-  const div = document.createElement('div');
+  const div = document.createElement("div");
   div.textContent = s;
   return div.innerHTML;
 }
@@ -450,8 +502,8 @@ function escapeHtml(s) {
 export function bindGraphSearch(inputSelector) {
   const input = document.querySelector(inputSelector);
   if (!input) return;
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
       const q = input.value.trim();
       if (q) focusNode(q);
     }
@@ -463,10 +515,12 @@ export function bindHighlightButton(btnSelector, inputSelector) {
   const btn = document.querySelector(btnSelector);
   const input = document.querySelector(inputSelector);
   if (!btn || !input) return;
-  btn.addEventListener('click', () => {
+  btn.addEventListener("click", () => {
     const q = input.value.trim();
     if (q) {
-      const found = nodeMeshes.find(n => n.node.id === q || n.node.name.includes(q));
+      const found = nodeMeshes.find(
+        (n) => n.node.id === q || n.node.name.includes(q),
+      );
       if (found) highlightDependencyPath(found.node.id);
     }
   });

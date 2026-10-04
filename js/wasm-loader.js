@@ -8,7 +8,7 @@ let useWasm = false;
 
 export async function initWasm() {
   try {
-    const resp = await fetch('./moonbit/depsight.wasm');
+    const resp = await fetch("./moonbit/depsight.wasm");
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const bytes = await resp.arrayBuffer();
 
@@ -20,23 +20,37 @@ export async function initWasm() {
 
     // 检查导出（MoonBit wasm-gc 导出形态可能是 __moonbit_* 或 analyze_from_context_json）
     const exports = WebAssembly.Module.exports(wasmModule);
-    const hasAnalyze = exports.some(e => e.name === 'analyze_from_context_json' || e.name.includes('analyze_from_context'));
+    const hasAnalyze = exports.some(
+      (e) =>
+        e.name === "analyze_from_context_json" ||
+        e.name.includes("analyze_from_context"),
+    );
     if (!hasAnalyze) {
-      console.warn('[wasm-loader] analyze_from_context_json not in exports, falling back to JS', exports);
+      console.warn(
+        "[wasm-loader] analyze_from_context_json not in exports, falling back to JS",
+        exports,
+      );
       useWasm = false;
     } else {
-      useWasm = true;
-      console.log('[wasm-loader] WASM loaded, exports:', exports.slice(0, 10));
+      // TODO: MoonBit wasm-gc 字符串 ABI 与 JS 不兼容，暂时禁用 WASM 分析
+      // 等修复字符串传递后再启用
+      useWasm = false;
+      console.log(
+        "[wasm-loader] WASM loaded but disabled due to ABI incompatibility",
+      );
     }
   } catch (e) {
-    console.warn('[wasm-loader] Failed to load WASM, falling back to JS:', e.message);
+    console.warn(
+      "[wasm-loader] Failed to load WASM, falling back to JS:",
+      e.message,
+    );
     useWasm = false;
   }
 
   return {
     instance: wasmInstance,
     useWasm,
-    status: useWasm ? 'loaded' : 'fallback',
+    status: useWasm ? "loaded" : "fallback",
   };
 }
 
@@ -44,7 +58,9 @@ function buildWasiImports() {
   // 最小 WASI + 自定义宿主函数
   return {
     wasi_snapshot_preview1: {
-      proc_exit: code => { throw new Error(`WASM proc_exit: ${code}`); },
+      proc_exit: (code) => {
+        throw new Error(`WASM proc_exit: ${code}`);
+      },
       fd_write: () => 0,
       fd_close: () => 0,
       fd_seek: () => 0,
@@ -52,7 +68,9 @@ function buildWasiImports() {
       fd_fdstat_get: () => 0,
       fd_fdstat_set_flags: () => 0,
       clock_time_get: () => 0n,
-      random_get: (ptr, len) => { return 0; },
+      random_get: (ptr, len) => {
+        return 0;
+      },
       poll_oneoff: () => 0,
       sched_yield: () => 0,
       path_open: () => 0,
@@ -108,7 +126,7 @@ function buildWasiImports() {
     env: {
       // 若 WASM 需要日志输出
       js_log: (ptr, len) => {
-        console.log('[wasm]', ptr, len);
+        console.log("[wasm]", ptr, len);
       },
     },
   };
@@ -121,13 +139,13 @@ export function callWasmAnalyze(contextJson) {
   }
   try {
     const fn = wasmInstance.exports.analyze_from_context_json;
-    if (typeof fn !== 'function') {
-      console.warn('[wasm-loader] analyze_from_context_json is not a function');
+    if (typeof fn !== "function") {
+      console.warn("[wasm-loader] analyze_from_context_json is not a function");
       return null;
     }
     return fn(contextJson);
   } catch (e) {
-    console.error('[wasm-loader] WASM call failed:', e);
+    console.error("[wasm-loader] WASM call failed:", e);
     return null;
   }
 }
