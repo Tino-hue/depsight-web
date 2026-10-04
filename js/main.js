@@ -9,7 +9,7 @@ import {
   clearHighlights,
 } from "./graph3d.js";
 import { renderTrends, recordTrend } from "./trends.js";
-import { renderEcosystem } from "./ecosystem.js";
+import { renderEcosystem, refreshEcosystem } from "./ecosystem.js";
 import {
   openAiDrawer,
   diagnoseAll,
@@ -132,6 +132,15 @@ function bindButtons() {
     // 由 graph3d 模块导出
     clearHighlights();
     focusNode(null);
+  });
+  $("#eco-refresh").addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    const ok = await refreshEcosystem(state);
+    e.target.disabled = false;
+    if (!ok) {
+      const status = $("#eco-data-status");
+      if (status) status.textContent = "刷新失败，请检查网络";
+    }
   });
 }
 
