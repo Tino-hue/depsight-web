@@ -1285,3 +1285,150 @@ fn format_double_2(d : Double) -> String {
 fn make_error_json(msg : String) -> String {
   "{\"error\":" + json_str(msg) + "}"
 }
+
+// ========== Bytes ABI 辅助（JS 侧用 Uint8Array 传递） ==========
+
+///|
+/// Bytes -> String（UTF-8 解码，逐字节构建）
+fn bytes_to_string(b : Bytes) -> String {
+  let len = b.length()
+  let buf = StringBuilder::new()
+  let mut i = 0
+  while i < len {
+    let byte = b[i].to_int()
+    if byte < 0x80 {
+      // ASCII 单字节
+      buf.write_char(Char::from_int(byte))
+      i = i + 1
+    } else if byte < 0xE0 {
+      // 2 字节 UTF-8
+      if i + 1 < len {
+        let b1 = b[i + 1].to_int()
+        let code = ((byte & 0x1F) << 6) | (b1 & 0x3F)
+        buf.write_char(Char::from_int(code))
+        i = i + 2
+      } else {
+        i = i + 1
+      }
+    } else if byte < 0xF0 {
+      // 3 字节 UTF-8
+      if i + 2 < len {
+        let b1 = b[i + 1].to_int()
+        let b2 = b[i + 2].to_int()
+        let code = ((byte & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)
+        buf.write_char(Char::from_int(code))
+        i = i + 3
+      } else {
+        i = i + 1
+      }
+    } else {
+      // 4 字节 UTF-8
+      if i + 3 < len {
+        let b1 = b[i + 1].to_int()
+        let b2 = b[i + 2].to_int()
+        let b3 = b[i + 3].to_int()
+        let code = ((byte & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)
+        buf.write_char(Char::from_int(code))
+        i = i + 4
+      } else {
+        i = i + 1
+      }
+    }
+  }
+  buf.to_string()
+}
+
+///|
+/// Int -> Byte（截断到低 8 位）
+fn int_to_byte(n : Int) -> Byte {
+  // 通过 FixedArray[Byte] 构造
+  let arr : FixedArray[Byte] = FixedArray::make(1, b'\x00')
+  // 用 unsafe cast via Int -> Byte
+  arr[0] = (n & 0xFF).to_byte()
+  arr[0]
+}
+
+///|
+/// String -> Bytes（UTF-8 编码）
+fn string_to_bytes(s : String) -> Bytes {
+  let len = s.length()
+  let mut total = 0
+  // 先计算 UTF-8 字节数
+  for c in s {
+    let code = c.to_int()
+    if code < 0x80 {
+      total = total + 1
+    } else if code < 0x800 {
+      total = total + 2
+    } else if code < 0x10000 {
+      total = total + 3
+    } else {
+      total = total + 4
+    }
+  }
+  // 填充字节
+  let buf = FixedArray::make(total, b'\x00')
+  let mut pos = 0
+  for c in s {
+    let code = c.to_int()
+    if code < 0x80 {
+      buf[pos] = int_to_byte(code)
+      pos = pos + 1
+    } else if code < 0x800 {
+      buf[pos] = int_to_byte(0xC0 | (code >> 6))
+      buf[pos + 1] = int_to_byte(0x80 | (code & 0x3F))
+      pos = pos + 2
+    } else if code < 0x10000 {
+      buf[pos] = int_to_byte(0xE0 | (code >> 12))
+      buf[pos + 1] = int_to_byte(0x80 | ((code >> 6) & 0x3F))
+      buf[pos + 2] = int_to_byte(0x80 | (code & 0x3F))
+      pos = pos + 3
+    } else {
+      buf[pos] = int_to_byte(0xF0 | (code >> 18))
+      buf[pos + 1] = int_to_byte(0x80 | ((code >> 12) & 0x3F))
+      buf[pos + 2] = int_to_byte(0x80 | ((code >> 6) & 0x3F))
+      buf[pos + 3] = int_to_byte(0x80 | (code & 0x3F))
+      pos = pos + 4
+    }
+  }
+  Bytes::from_array(buf)
+}
+
+///|
+/// 主入口（Bytes 版）：从完整上下文运行分析，返回 JSON 的 UTF-8 字节。
+#export_name("analyze_from_context_json_bytes")
+pub fn analyze_from_context_json_bytes(context_json : Bytes) -> Bytes {
+  let input = bytes_to_string(context_json)
+  let output = match run_analysis(input) {
+    Ok(json) => json
+    Err(msg) => make_error_json(msg)
+  }
+  string_to_bytes(output)
+}
+
+///|
+/// 便捷入口（Bytes 版）：仅分析单个 moon.mod / moon.mod.json。
+#export_name("analyze_from_mod_text_bytes")
+pub fn analyze_from_mod_text_bytes(mod_text : Bytes) -> Bytes {
+  let input = bytes_to_string(mod_text)
+  let output = match parse_mod_text(input) {
+    Ok(root) => {
+      let graph = build_shallow_graph(root)
+      let metas = build_shallow_metas(graph, root)
+      let health_scores = compute_health_scores(graph, metas)
+      let diags = run_diagnostics(graph, metas)
+      let size_offenders = compute_size_offenders(graph, metas)
+      let stats = compute_ecosystem_stats(graph, health_scores, metas)
+      assemble_result(graph, health_scores, diags, size_offenders, stats, metas)
+    }
+    Err(msg) => make_error_json(msg)
+  }
+  string_to_bytes(output)
+}
+
+///|
+/// 版本号（Bytes 版）
+#export_name("version_bytes")
+pub fn version_bytes() -> Bytes {
+  string_to_bytes("0.6.0-wasm")
+}

@@ -20,9 +20,14 @@ export async function initWasm() {
 
     // 检查导出（MoonBit wasm-gc 导出形态可能是 __moonbit_* 或 analyze_from_context_json）
     const exports = WebAssembly.Module.exports(wasmModule);
+    console.log(
+      "[wasm-loader] All exports:",
+      exports.map((e) => `${e.name}: ${e.kind}`),
+    );
+
     const hasAnalyze = exports.some(
       (e) =>
-        e.name === "analyze_from_context_json" ||
+        e.name === "analyze_from_context_json_bytes" ||
         e.name.includes("analyze_from_context"),
     );
     if (!hasAnalyze) {
@@ -32,12 +37,29 @@ export async function initWasm() {
       );
       useWasm = false;
     } else {
-      // TODO: MoonBit wasm-gc 字符串 ABI 与 JS 不兼容，暂时禁用 WASM 分析
-      // 等修复字符串传递后再启用
-      useWasm = false;
-      console.log(
-        "[wasm-loader] WASM loaded but disabled due to ABI incompatibility",
-      );
+      // 尝试调用 version_bytes() 测试 Bytes ABI
+      try {
+        const v = wasmInstance.exports.version_bytes();
+        console.log(
+          "[wasm-loader] version_bytes() returned:",
+          v,
+          typeof v,
+          v instanceof Uint8Array,
+        );
+        if (v instanceof Uint8Array) {
+          const decoder = new TextDecoder();
+          console.log("[wasm-loader] version string:", decoder.decode(v));
+          useWasm = true;
+        } else {
+          console.warn(
+            "[wasm-loader] version_bytes() did not return Uint8Array",
+          );
+          useWasm = false;
+        }
+      } catch (e) {
+        console.warn("[wasm-loader] version_bytes() call failed:", e.message);
+        useWasm = false;
+      }
     }
   } catch (e) {
     console.warn(
@@ -132,18 +154,30 @@ function buildWasiImports() {
   };
 }
 
-// 调用 WASM 导出的 analyze_from_context_json
+// 调用 WASM 导出的 analyze_from_context_json_bytes
 export function callWasmAnalyze(contextJson) {
   if (!useWasm || !wasmInstance) {
     return null;
   }
   try {
-    const fn = wasmInstance.exports.analyze_from_context_json;
+    const fn = wasmInstance.exports.analyze_from_context_json_bytes;
     if (typeof fn !== "function") {
-      console.warn("[wasm-loader] analyze_from_context_json is not a function");
+      console.warn(
+        "[wasm-loader] analyze_from_context_json_bytes is not a function",
+      );
       return null;
     }
-    return fn(contextJson);
+    // 将 JS string 转为 Uint8Array
+    const encoder = new TextEncoder();
+    const inputBytes = encoder.encode(contextJson);
+    const resultBytes = fn(inputBytes);
+    // 将返回的 Uint8Array 转回 JS string
+    if (resultBytes instanceof Uint8Array) {
+      const decoder = new TextDecoder();
+      return decoder.decode(resultBytes);
+    }
+    console.warn("[wasm-loader] WASM returned non-Uint8Array:", resultBytes);
+    return null;
   } catch (e) {
     console.error("[wasm-loader] WASM call failed:", e);
     return null;

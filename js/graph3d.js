@@ -293,11 +293,9 @@ let frameCount = 0;
 function animate() {
   animationId = requestAnimationFrame(animate);
   frameCount++;
-  if (frameCount === 1 || frameCount % 60 === 0) {
+  if (frameCount === 1) {
     console.log(
-      "[graph3d] animate frame",
-      frameCount,
-      "scene children:",
+      "[graph3d] animate started, scene children:",
       scene?.children?.length,
     );
   }
