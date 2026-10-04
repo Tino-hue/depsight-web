@@ -72,7 +72,7 @@ pub fn version() -> String {
 
 ///|
 /// 解析后的模块（TOML 解析过程需要逐个字段回填，故为 mut）
-struct Module {
+priv struct Module {
   mut name : String
   mut version : String
   mut license : String?
@@ -81,7 +81,7 @@ struct Module {
 
 ///|
 /// 图节点
-struct Node {
+priv struct Node {
   id : String
   name : String
   version : String
@@ -90,14 +90,14 @@ struct Node {
 
 ///|
 /// 图边
-struct Edge {
+priv struct Edge {
   from : String
   to : String
 }
 
 ///|
 /// 依赖图
-struct Graph {
+priv struct Graph {
   root_id : String
   nodes : Array[Node]
   edges : Array[Edge]
@@ -105,7 +105,7 @@ struct Graph {
 
 ///|
 /// 节点元数据
-struct NodeMeta {
+priv struct NodeMeta {
   license : String?
   latest_version : String?
   last_commit_days_ago : Int?
@@ -116,7 +116,7 @@ struct NodeMeta {
 
 ///|
 /// 健康分
-struct HealthScore {
+priv struct HealthScore {
   node_id : String
   total : Int
   freshness : Int
@@ -128,7 +128,7 @@ struct HealthScore {
 
 ///|
 /// 诊断
-struct Diagnostic {
+priv struct Diagnostic {
   code : String
   severity : String  // "critical" / "warning" / "info"
   node_id : String
@@ -137,7 +137,7 @@ struct Diagnostic {
 
 ///|
 /// 生态统计
-struct EcosystemStats {
+priv struct EcosystemStats {
   total_packages : Int
   direct_dependencies : Int
   max_depth : Int
@@ -162,7 +162,7 @@ let weights : Map[String, Double] = Map([
 ///|
 /// 解析 moon.mod（TOML 简化）或 moon.mod.json
 fn parse_mod_text(text : String) -> Result[Module, String] {
-  let trimmed = text.trim().to_string()
+  let trimmed = text.trim().to_owned()
   if trimmed.has_prefix("{") {
     parse_mod_json(trimmed)
   } else {
@@ -211,10 +211,10 @@ fn parse_mod_toml(text : String) -> Result[Module, String] {
   let mut in_import = false
 
   for raw in text.split("\n") {
-    let mut line = raw.trim().to_string()
+    let mut line = raw.trim().to_owned()
     // 去注释
     match line.find("#") {
-      Some(idx) => line = line[:idx].trim().to_string()
+      Some(idx) => line = line[:idx].trim().to_owned()
       None => ()
     }
     if line.is_empty() { continue }
@@ -255,7 +255,7 @@ fn parse_mod_toml(text : String) -> Result[Module, String] {
 /// 取 `key = value` 中 `=` 右侧原文
 fn toml_value(line : String) -> String {
   match line.find("=") {
-    Some(eq) => line[eq+1:].trim().to_string()
+    Some(eq) => line[eq+1:].trim().to_owned()
     None => ""
   }
 }
@@ -264,7 +264,7 @@ fn toml_value(line : String) -> String {
 /// 从 "pkg@1.0" 拆分（@ 取最后一个，兼容 scope 名）
 fn split_dep_name(s : String) -> (String, String) {
   match s.rev_find("@") {
-    Some(at) if at > 0 => (s[:at].to_string(), s[at+1:].to_string())
+    Some(at) if at > 0 => (s[:at].to_owned(), s[at+1:].to_owned())
     _ => (s, "latest")
   }
 }
@@ -272,11 +272,11 @@ fn split_dep_name(s : String) -> (String, String) {
 ///|
 /// 去掉首尾引号
 fn strip_quotes(s : String) -> String {
-  let t = s.trim().to_string()
+  let t = s.trim().to_owned()
   if t.has_prefix("\"") && t.has_suffix("\"") && t.length() >= 2 {
-    t[1:t.length()-1].to_string()
+    t[1:t.length()-1].to_owned()
   } else if t.has_prefix("'") && t.has_suffix("'") && t.length() >= 2 {
-    t[1:t.length()-1].to_string()
+    t[1:t.length()-1].to_owned()
   } else {
     t
   }
@@ -289,7 +289,7 @@ fn extract_brace_content(line : String) -> String? {
     Some(start) =>
       match line.rev_find("}") {
         Some(end) if end > start =>
-          Some(line[start+1:end].to_string())
+          Some(line[start+1:end].to_owned())
         _ => None
       }
     None => None
@@ -303,7 +303,7 @@ fn extract_quoted(line : String) -> String? {
     Some(start) =>
       match line.rev_find("\"") {
         Some(end) if end > start =>
-          Some(line[start+1:end].to_string())
+          Some(line[start+1:end].to_owned())
         _ => None
       }
     None => None
@@ -316,7 +316,7 @@ fn add_imports(deps : Map[String, String], content : String) -> Unit {
   // 简化：按逗号分割，再分别提取
   let parts = content.split(",")
   for part in parts {
-    match extract_quoted(part.trim().to_string()) {
+    match extract_quoted(part.trim().to_owned()) {
       Some(s) => {
         let (n, v) = split_dep_name(s)
         deps[n] = v
@@ -609,7 +609,7 @@ fn parse_uint(s : StringView) -> Int? {
   if t.is_empty() { return None }
   let mut n = 0
   for c in t {
-    if not (c >= '0' && c <= '9') { return None }
+    if !(c >= '0' && c <= '9') { return None }
     n = n * 10 + (c.to_int() - 48)
   }
   Some(n)
@@ -1292,20 +1292,20 @@ fn make_error_json(msg : String) -> String {
 /// Bytes -> String（UTF-8 解码，逐字节构建）
 fn bytes_to_string(b : Bytes) -> String {
   let len = b.length()
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   let mut i = 0
   while i < len {
     let byte = b[i].to_int()
     if byte < 0x80 {
       // ASCII 单字节
-      buf.write_char(Char::from_int(byte))
+      buf.write_char(byte.unsafe_to_char())
       i = i + 1
     } else if byte < 0xE0 {
       // 2 字节 UTF-8
       if i + 1 < len {
         let b1 = b[i + 1].to_int()
         let code = ((byte & 0x1F) << 6) | (b1 & 0x3F)
-        buf.write_char(Char::from_int(code))
+        buf.write_char(code.unsafe_to_char())
         i = i + 2
       } else {
         i = i + 1
@@ -1316,7 +1316,7 @@ fn bytes_to_string(b : Bytes) -> String {
         let b1 = b[i + 1].to_int()
         let b2 = b[i + 2].to_int()
         let code = ((byte & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)
-        buf.write_char(Char::from_int(code))
+        buf.write_char(code.unsafe_to_char())
         i = i + 3
       } else {
         i = i + 1
@@ -1328,7 +1328,7 @@ fn bytes_to_string(b : Bytes) -> String {
         let b2 = b[i + 2].to_int()
         let b3 = b[i + 3].to_int()
         let code = ((byte & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)
-        buf.write_char(Char::from_int(code))
+        buf.write_char(code.unsafe_to_char())
         i = i + 4
       } else {
         i = i + 1
@@ -1351,7 +1351,6 @@ fn int_to_byte(n : Int) -> Byte {
 ///|
 /// String -> Bytes（UTF-8 编码）
 fn string_to_bytes(s : String) -> Bytes {
-  let len = s.length()
   let mut total = 0
   // 先计算 UTF-8 字节数
   for c in s {

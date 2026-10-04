@@ -1,1 +1,4 @@
 pkgtype(kind: "foreign_library")
+import (
+  "moonbitlang/core/json"
+)
