@@ -35,14 +35,10 @@ depsight-web 是一个纯浏览器端运行的 MoonBit 依赖健康分析平台�
 - 五维健康评分：新鲜度、合规性、废弃密度、体积合理性、维护活跃度（基于包元数据，非下载量）
 - 0-100 综合评分 + Critical / Warning / Info 三级诊断
 - Three.js 3D 力导向依赖图，支持节点拖拽、聚焦、悬停详情
-- 健康分历史趋势曲线（基于本地存储或导入数据）
-- LLM API 智能诊断面板，自动生成人话版优化建议
-- MoonBit 生态整体健康大盘（规划中，待实现）
+- 健康分历史趋势曲线（基于本地存储）
+- LLM API 智能诊断面板，自动生成自然语言优化建议与修复 PR 描述
+- MoonBit 生态整体健康大盘（接入 mooncakes.io 真实数据，含许可证分布、活跃度分类、最近发布 TOP 10）
 
 ## 原创性声明
 
 本项目为**原创项目**，未移植或参考任何第三方开源项目的实现。项目演进自作者本人此前开发的 depsight CLI（https://github.com/Tino-hue/depsight），但为完全独立的 Web 端重写，代码仓库、技术栈、用户场景均不重叠。仅公开协议与数据接口遵循 mooncakes.io 与 WebAssembly 标准。
-
-## 仓库 commit 说明
-
-仓库地址：https://github.com/Tino-hue/depsight-web ，截至申报时已推送 6 个有效 commit，覆盖初始化、各功能模块开发与测试等关键节点，无空提交或拆分凑数提交。
