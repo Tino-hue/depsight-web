@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 10%;
+    --foreground: 0 0% 96%;
+    --primary: 119 99% 46%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 18%;
+    --muted: 0 0% 16%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 119 99% 46%;
+    --destructive: 0 84% 60%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 119 99% 46%;
+    --radius: 0.5rem;
+    --hero-bg: 0 0% 8%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sora antialiased;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--border));
+  }
+}
+
+@layer components {
+  /* 毛玻璃卡片 + 渐变边框 */
+  .liquid-glass {
+    position: relative;
+    background: rgba(255, 255, 255, 0.01);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius);
+  }
+
+  .liquid-glass::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.18),
+      rgba(255, 255, 255, 0.03) 40%,
+      hsl(var(--primary) / 0.25)
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* 分数颜色 */
+  .score-good {
+    color: hsl(var(--primary));
+  }
+  .score-mid {
+    color: hsl(36 90% 55%);
+  }
+  .score-bad {
+    color: hsl(var(--destructive));
+  }
+}
