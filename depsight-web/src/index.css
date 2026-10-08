@@ -20,6 +20,22 @@
     --hero-bg: 0 0% 8%;
   }
 
+  .light {
+    --background: 210 25% 97%; /* #F5F7FA 柔和浅灰蓝 */
+    --foreground: 220 20% 15%;
+    --primary: 119 99% 32%; /* 略深的绿，保证浅色下对比度 */
+    --primary-foreground: 0 0% 98%;
+    --secondary: 210 20% 92%;
+    --muted: 210 20% 92%;
+    --muted-foreground: 220 10% 40%;
+    --accent: 119 99% 32%;
+    --destructive: 0 84% 45%;
+    --border: 220 15% 85%;
+    --input: 220 15% 85%;
+    --ring: 119 99% 32%;
+    --hero-bg: 210 25% 97%;
+  }
+
   * {
     @apply border-border;
   }
@@ -64,7 +80,7 @@
   }
 
   .liquid-glass::before {
-    content: '';
+    content: "";
     position: absolute;
     inset: 0;
     border-radius: inherit;
@@ -95,5 +111,792 @@
   }
   .score-bad {
     color: hsl(var(--destructive));
+  }
+}
+
+@layer components {
+  /* ============ Hero 落地首页 ============ */
+  .hero-root {
+    --green: hsl(var(--primary));
+    --green-soft: hsl(var(--primary) / 0.55);
+    --muted-fg: #9a9a9a;
+    --hairline: rgba(255, 255, 255, 0.16);
+    --hairline-soft: rgba(255, 255, 255, 0.12);
+    --header-x: 40px;
+    --stats-x: 72px;
+    position: relative;
+    background: #000;
+    color: #fff;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: hidden;
+    font-family: "Sora", system-ui, sans-serif;
+  }
+
+  /* 浅色主题：Hero 适配 */
+  .light .hero-root {
+    --muted-fg: #555;
+    --hairline: rgba(0, 0, 0, 0.14);
+    --hairline-soft: rgba(0, 0, 0, 0.1);
+    background: hsl(var(--hero-bg));
+    color: hsl(var(--foreground));
+  }
+
+  /* 扫描线 + 网格脉冲背景 */
+  .hero-scan {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+    background-size: 56px 56px;
+  }
+  .light .hero-scan {
+    background-image:
+      linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+  }
+  .hero-scan::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      hsl(var(--primary) / 0.05) 50%,
+      transparent 100%
+    );
+    background-size: 100% 220px;
+    animation: hero-scanline 7s linear infinite;
+  }
+  .hero-scan::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse 60% 45% at 50% 115%,
+      hsl(var(--primary) / 0.14),
+      transparent 70%
+    );
+  }
+  @keyframes hero-scanline {
+    0% {
+      background-position: 0 -220px;
+    }
+    100% {
+      background-position: 0 100vh;
+    }
+  }
+
+  .hero-page {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  /* ---------- 进场动画基类 ---------- */
+  .hero-appear {
+    opacity: 1;
+    animation-duration: 1.05s;
+    animation-fill-mode: both;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    animation-delay: var(--d, 0.08s);
+  }
+  .hero-appear.is-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    clip-path: none;
+    filter: none;
+  }
+  .appear--scale {
+    animation-name: hero-in-scale;
+  }
+  .appear--soft {
+    animation-name: hero-in-soft;
+  }
+  .appear--pop {
+    animation-name: hero-in-pop;
+  }
+  .appear--mask {
+    animation-name: hero-in-mask;
+  }
+  .appear--btn {
+    animation-name: hero-in-btn;
+  }
+  .appear--side {
+    animation-name: hero-in-side;
+  }
+  .appear--stat {
+    animation-name: hero-in-stat;
+  }
+
+  @keyframes hero-in-scale {
+    from {
+      opacity: 0;
+      transform: scale(0.84);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes hero-in-soft {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes hero-in-mask {
+    from {
+      opacity: 0;
+      transform: translateY(40%);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes hero-in-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+    70% {
+      opacity: 1;
+      transform: scale(1.03);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes hero-in-btn {
+    from {
+      opacity: 0;
+      transform: translateY(18px) scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes hero-in-side {
+    from {
+      opacity: 0;
+      transform: translateX(22px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  @keyframes hero-in-stat {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .hero-header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 22px var(--header-x) 10px;
+    position: relative;
+    z-index: 50;
+  }
+
+  .hero-logo {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 15.5px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    color: #fff;
+    text-decoration: none;
+    color: var(--green);
+  }
+  .hero-logo-dot {
+    color: var(--green);
+  }
+
+  .hero-header-right {
+    justify-self: end;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* ---------- 按钮 ---------- */
+  .hero-btn {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 40px;
+    padding: 0 16px;
+    border-radius: 6px;
+    font-size: 13.5px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    text-decoration: none;
+    transition:
+      background 0.35s,
+      border-color 0.35s,
+      box-shadow 0.35s,
+      color 0.35s,
+      filter 0.35s;
+    font-family: inherit;
+  }
+  .hero-btn::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      115deg,
+      transparent 20%,
+      rgba(255, 255, 255, 0.45) 48%,
+      transparent 76%
+    );
+    transform: translateX(-130%);
+    transition: transform 0.65s ease;
+  }
+  .hero-btn:hover::after {
+    transform: translateX(130%);
+  }
+
+  /* 主按钮：品牌绿 */
+  .hero-btn-solid {
+    background: linear-gradient(180deg, #4ade63 0%, #22c55e 48%, #16a34a 100%);
+    color: #04140a;
+    border: 1px solid #4ade63;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.5),
+      0 0 18px hsl(var(--primary) / 0.3);
+    height: 42px;
+    padding: 0 18px;
+  }
+  .hero-btn-solid:hover {
+    background: linear-gradient(180deg, #6befa0 0%, #2fe07a 42%, #1dc45c 100%);
+    border-color: #86ffb8;
+    box-shadow:
+      inset 0 1px 0 #fff,
+      0 0 26px hsl(var(--primary) / 0.5),
+      0 8px 18px rgba(0, 0, 0, 0.4);
+  }
+
+  /* 顶栏 ghost（GitHub） */
+  .hero-btn-ghost {
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.12),
+      rgba(0, 0, 0, 0.45) 50%,
+      hsl(var(--primary) / 0.06)
+    );
+    color: #fff;
+    border: 1px solid rgba(198, 198, 198, 0.45);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+  .hero-btn-ghost:hover {
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.2),
+      rgba(0, 0, 0, 0.35) 48%,
+      hsl(var(--primary) / 0.16)
+    );
+    border-color: var(--green-soft);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 0 20px hsl(var(--primary) / 0.3);
+  }
+
+  /* Hero 区 ghost */
+  .hero-btn-hero-ghost {
+    height: 42px;
+    padding: 0 18px;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.12),
+      rgba(0, 0, 0, 0.5) 46%,
+      hsl(var(--primary) / 0.08)
+    );
+    border: 1px solid rgba(198, 198, 198, 0.55);
+    color: #fff;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  .hero-btn-hero-ghost:hover {
+    border-color: var(--green-soft);
+    box-shadow: 0 0 24px hsl(var(--primary) / 0.3);
+  }
+
+  /* ---------- Hero 主体（垂直居中） ---------- */
+  .hero {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 24px 85px;
+    min-height: 0;
+  }
+  .hero-copy {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 860px;
+    width: 100%;
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    gap: 8px;
+    margin-bottom: 22px;
+    padding: 9px 15px;
+    border-radius: 5px;
+    background: linear-gradient(90deg, #233a28 0%, #14231a 52%, #060a07 100%);
+    border: 1px solid hsl(var(--primary) / 0.35);
+    color: #dfffe8;
+    font-size: 12.5px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    align-items: center;
+  }
+  .hero-badge-star {
+    color: var(--green);
+    filter: drop-shadow(0 0 3px hsl(var(--primary) / 0.6));
+    animation: hero-in-star 0.9s 0.28s both;
+  }
+  @keyframes hero-in-star {
+    from {
+      transform: scale(0.2) rotate(-50deg);
+    }
+    65% {
+      transform: scale(1.2) rotate(8deg);
+    }
+    to {
+      transform: scale(1) rotate(0);
+    }
+  }
+
+  .hero-h1 {
+    margin: 0;
+    font-weight: 500;
+    letter-spacing: -0.045em;
+    line-height: 1.12;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    /* 父级 hero-copy 是 align-items:center 的 flex 容器，
+       h1 作为 flex item 宽度会 shrink-to-fit；
+       不给 100% 宽度会导致内部 .warp-text 的 width:100% 循环解析为 0 */
+    width: 100%;
+    align-items: center;
+    font-size: 56px;
+  }
+  .headline-line {
+    display: block;
+    overflow: hidden;
+    padding: 0.06em 0.15em 0.14em;
+  }
+  .hero-h1 em {
+    font-style: italic;
+    font-size: 1.08em;
+    letter-spacing: -0.03em;
+    color: var(--green);
+    animation: hero-in-em 1.2s 0.72s both;
+  }
+  @keyframes hero-in-em {
+    from {
+      opacity: 0.35;
+      filter: blur(4px);
+    }
+    to {
+      opacity: 1;
+      filter: blur(0);
+    }
+  }
+
+  .hero-lede {
+    max-width: 470px;
+    margin: 18px 0 0;
+    color: var(--muted-fg);
+    font-size: 15.5px;
+    font-weight: 400;
+    line-height: 1.55;
+    letter-spacing: -0.015em;
+  }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 26px;
+  }
+
+  /* ---------- 统计栏 ---------- */
+  .hero-stats {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 0 var(--stats-x) 36px;
+    padding-bottom: max(36px, env(safe-area-inset-bottom));
+    color: #d8d8d8;
+  }
+  .hero-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 13.5px;
+    letter-spacing: -0.015em;
+    white-space: nowrap;
+  }
+  .hero-stat-icon {
+    display: inline-flex;
+    color: #e8e8e8;
+  }
+  .hero-wasm {
+    position: absolute;
+    right: var(--stats-x);
+    top: -28px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: hsl(var(--primary) / 0.7);
+  }
+
+  /* WarpText WebGL 文字容器 */
+  .warp-text {
+    position: relative;
+    display: block;
+    width: 100%;
+    min-height: 220px;
+    overflow: hidden;
+    isolation: isolate;
+    border-radius: inherit;
+  }
+  .warp-text canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* 浅色主题：Hero 元素适配 */
+  .light .hero-h1 {
+    color: hsl(var(--foreground));
+  }
+  .light .hero-stats {
+    color: hsl(var(--foreground) / 0.7);
+  }
+  .light .hero-stat-icon {
+    color: hsl(var(--foreground) / 0.6);
+  }
+  .light .hero-badge {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0.12) 0%,
+      hsl(var(--primary) / 0.06) 52%,
+      transparent 100%
+    );
+    border-color: hsl(var(--primary) / 0.25);
+    color: hsl(var(--primary) / 0.9);
+  }
+  .light .hero-scan::before {
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      hsl(var(--primary) / 0.08) 50%,
+      transparent 100%
+    );
+  }
+  .light .hero-scan::after {
+    background: radial-gradient(
+      ellipse 60% 45% at 50% 115%,
+      hsl(var(--primary) / 0.1),
+      transparent 70%
+    );
+  }
+
+  /* 浅色模式：ghost 按钮文字/背景适配 */
+  .light .hero-btn-ghost,
+  .light .hero-btn-hero-ghost {
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.1),
+      rgba(255, 255, 255, 0.6) 46%,
+      hsl(var(--primary) / 0.06)
+    );
+    color: hsl(var(--foreground));
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+  .light .hero-btn-ghost:hover,
+  .light .hero-btn-hero-ghost:hover {
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.16),
+      rgba(255, 255, 255, 0.7) 46%,
+      hsl(var(--primary) / 0.1)
+    );
+    border-color: hsl(var(--primary) / 0.5);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.5),
+      0 0 24px hsl(var(--primary) / 0.2);
+  }
+
+  /* ============ 响应式 ============ */
+  @media (min-width: 1600px) {
+    .hero-root {
+      --header-x: 64px;
+      --stats-x: 96px;
+    }
+    .hero-h1 {
+      font-size: 64px;
+    }
+    .hero-lede {
+      font-size: 18px;
+      max-width: 540px;
+    }
+    .hero-logo {
+      font-size: 17px;
+    }
+    .hero-btn {
+      height: 44px;
+      font-size: 15px;
+    }
+    .hero-btn-solid,
+    .hero-btn-hero-ghost {
+      height: 48px;
+    }
+    .hero-badge {
+      font-size: 13.5px;
+      padding: 10px 15px;
+      margin-bottom: 26px;
+    }
+    .hero-lede {
+      margin-top: 22px;
+    }
+    .hero-actions {
+      margin-top: 30px;
+      gap: 12px;
+    }
+    .hero-stat {
+      font-size: 15px;
+    }
+    .hero-stats {
+      padding-bottom: 44px;
+    }
+  }
+  @media (min-width: 1920px) {
+    .hero-root {
+      --header-x: 80px;
+      --stats-x: 120px;
+    }
+    .hero-h1 {
+      font-size: 76px;
+    }
+    .hero-lede {
+      font-size: 20px;
+      max-width: 620px;
+    }
+    .hero {
+      padding-bottom: 96px;
+    }
+    .hero-stats {
+      padding-bottom: 52px;
+    }
+  }
+  @media (min-width: 2560px) {
+    .hero-root {
+      --header-x: 120px;
+      --stats-x: 160px;
+    }
+    .hero-h1 {
+      font-size: 88px;
+    }
+    .hero-copy {
+      max-width: 1280px;
+    }
+    .hero-lede {
+      max-width: 680px;
+    }
+  }
+  @media (max-width: 1279px) and (min-width: 901px) {
+    .hero-h1 {
+      font-size: 42px;
+    }
+    .hero-lede {
+      font-size: 15px;
+      max-width: 440px;
+    }
+    .hero {
+      padding-bottom: 64px;
+    }
+    .hero-root {
+      --header-x: 28px;
+      --stats-x: 36px;
+    }
+    .hero-badge {
+      margin-bottom: 16px;
+    }
+    .hero-lede {
+      margin-top: 14px;
+    }
+    .hero-actions {
+      margin-top: 20px;
+    }
+  }
+  /* 桌面锁定单帧不滚动 */
+  @media (min-width: 901px) {
+    .hero-root {
+      height: 100vh;
+      height: 100dvh;
+    }
+  }
+  @media (min-width: 901px) and (max-height: 850px) {
+    .hero {
+      padding-bottom: 48px;
+    }
+    .hero-h1 {
+      font-size: 40px;
+    }
+    .hero-badge {
+      margin-bottom: 12px;
+    }
+    .hero-lede {
+      margin-top: 12px;
+    }
+    .hero-actions {
+      margin-top: 16px;
+    }
+    .hero-stats {
+      padding-bottom: 24px;
+    }
+  }
+  @media (min-width: 901px) and (max-height: 720px) {
+    .hero {
+      padding-bottom: 32px;
+    }
+    .hero-h1 {
+      font-size: 34px;
+    }
+    .hero-lede {
+      font-size: 14px;
+    }
+    .hero-badge {
+      margin-bottom: 8px;
+    }
+    .hero-stats {
+      padding-bottom: 18px;
+    }
+    .hero-btn {
+      height: 34px;
+    }
+    .hero-btn-solid,
+    .hero-btn-hero-ghost {
+      height: 36px;
+    }
+  }
+
+  /* 手机端 */
+  @media (max-width: 900px) {
+    .hero-header {
+      grid-template-columns: 1fr auto;
+      --header-x: 18px;
+      gap: 8px;
+    }
+
+    .hero {
+      padding: 20px 20px 36px;
+      align-items: center;
+    }
+    .hero-h1 {
+      font-size: 36px;
+    }
+    .hero-lede {
+      font-size: 16.5px;
+      max-width: 100%;
+    }
+    .hero-badge {
+      font-size: 13.5px;
+    }
+    .hero-copy {
+      max-width: 100%;
+    }
+    .hero-actions {
+      flex-direction: column;
+      width: 100%;
+    }
+    .hero-actions .hero-btn {
+      width: 100%;
+    }
+    .hero-stats {
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 0 20px 28px;
+      --stats-x: 20px;
+    }
+    .hero-stat {
+      white-space: normal;
+      justify-content: center;
+      font-size: 15px;
+    }
+    .hero-wasm {
+      position: static;
+    }
+  }
+  @media (max-width: 560px) {
+    .hero-h1 {
+      font-size: 34px;
+    }
+    .hero-lede {
+      font-size: 16px;
+    }
+  }
+
+  /* 减弱动画偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    .hero-appear,
+    .hero-badge-star,
+    .hero-h1 em,
+    .hero-scan::before {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+      filter: none !important;
+    }
+    .hero-appear {
+      transition: none !important;
+    }
   }
 }
