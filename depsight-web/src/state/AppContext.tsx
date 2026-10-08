@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -23,6 +24,24 @@ import type {
 } from "@/lib/types";
 
 const TRENDS_STORAGE_KEY = "depsight_trends";
+const THEME_STORAGE_KEY = "depsight_theme";
+
+export type Theme = "dark" | "light";
+
+const VALID_VIEWS: AppView[] = [
+  "hero",
+  "analyze",
+  "graph",
+  "trends",
+  "ecosystem",
+];
+
+/** 从 #hash 解析初始视图（默认 hero 落地首页） */
+function viewFromHash(): AppView {
+  if (typeof window === "undefined") return "hero";
+  const h = window.location.hash.replace("#", "");
+  return (VALID_VIEWS as string[]).includes(h) ? (h as AppView) : "hero";
+}
 
 function loadStoredTrends(): TrendMap {
   try {
@@ -38,6 +57,16 @@ function saveStoredTrends(trends: TrendMap): void {
     localStorage.setItem(TRENDS_STORAGE_KEY, JSON.stringify(trends));
   } catch {
     /* ignore */
+  }
+}
+
+/** 从 localStorage 读取主题偏好（默认 dark） */
+function loadTheme(): Theme {
+  try {
+    const raw = localStorage.getItem(THEME_STORAGE_KEY);
+    return raw === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
   }
 }
 
@@ -66,6 +95,9 @@ interface AppContextValue {
   // 路由
   view: AppView;
   setView: (view: AppView) => void;
+  // 主题
+  theme: Theme;
+  toggleTheme: () => void;
   // AI 抽屉
   aiOpen: boolean;
   setAiOpen: (open: boolean) => void;
@@ -79,8 +111,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { status: wasmStatus, useWasm } = useWasmHook();
   const { analyzeModText, analyzeFromContext } = useAnalyzer(useWasm);
 
-  const [view, setView] = useState<AppView>("analyze");
+  const [view, setViewState] = useState<AppView>(viewFromHash);
   const [aiOpen, setAiOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>(loadTheme);
+
+  // 主题切换：写 localStorage + 切换根元素 class
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      /* ignore */
+    }
+    const root = document.documentElement;
+    if (theme === "light") {
+      root.classList.add("light");
+    } else {
+      root.classList.remove("light");
+    }
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }, []);
+
+  // 视图 ⇄ #hash 双向同步：可分享、可后退、刷新不丢
+  useEffect(() => {
+    const target = view === "hero" ? "#hero" : `#${view}`;
+    if (window.location.hash !== target) {
+      history.replaceState(null, "", target);
+    }
+  }, [view]);
+
+  useEffect(() => {
+    const onHash = () => setViewState(viewFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const setView = useCallback((v: AppView) => setViewState(v), []);
   const [aiTask, setAiTask] = useState<AiTask | null>(null);
 
   const [lastResult, setLastResult] = useState<AnalysisResult | null>(null);
@@ -133,6 +201,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       trends,
       view,
       setView,
+      theme,
+      toggleTheme,
       aiOpen,
       setAiOpen,
       aiTask,
@@ -149,6 +219,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       lastRootMod,
       trends,
       view,
+      theme,
+      toggleTheme,
       aiOpen,
       aiTask,
       requestAi,

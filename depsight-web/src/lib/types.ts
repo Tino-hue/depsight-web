@@ -198,5 +198,5 @@ export interface SelectedNodeInfo {
   meta?: NodeMetaOutput
 }
 
-/** 应用视图 */
-export type AppView = 'analyze' | 'graph' | 'trends' | 'ecosystem'
+/** 应用视图（hero = 落地首页，其余为工作台视图） */
+export type AppView = 'hero' | 'analyze' | 'graph' | 'trends' | 'ecosystem'

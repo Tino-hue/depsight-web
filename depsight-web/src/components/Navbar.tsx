@@ -1,7 +1,8 @@
-// 顶部导航栏：fixed 浮动，视图路由 + WASM 状态徽章
+// 顶部导航栏：fixed 浮动，视图路由 + WASM 状态徽章 + 主题切换
 import { Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { useApp } from "@/state/AppContext";
 import { cn } from "@/lib/utils";
 import type { AppView } from "@/lib/types";
@@ -14,7 +15,15 @@ const NAV_ITEMS: { view: AppView; label: string }[] = [
 ];
 
 export function Navbar() {
-  const { view, setView, wasmStatus, lastResult, requestAi } = useApp();
+  const {
+    view,
+    setView,
+    wasmStatus,
+    lastResult,
+    requestAi,
+    theme,
+    toggleTheme,
+  } = useApp();
 
   const onAiClick = () => {
     if (!lastResult) return;
@@ -26,8 +35,8 @@ export function Navbar() {
       <nav className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
         <button
           type="button"
-          className="font-semibold text-xl tracking-tight hover:opacity-80 transition-opacity"
-          onClick={() => setView("analyze")}
+          className="font-semibold text-xl tracking-tight text-primary hover:opacity-80 transition-opacity"
+          onClick={() => setView("hero")}
         >
           depsight
         </button>
@@ -81,6 +90,10 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-2">
+          <AnimatedThemeToggler
+            isDark={theme === "dark"}
+            onToggle={toggleTheme}
+          />
           {wasmStatus === "loading" && (
             <Badge variant="secondary" className="animate-pulse">
               WASM …
