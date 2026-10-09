@@ -6,6 +6,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Crosshair, Route, RotateCcw } from "lucide-react";
 
+import { ShareButton } from "@/components/ShareButton";
+import { WorkbenchShell } from "@/components/WorkbenchShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fmtBytes } from "@/lib/analyzer";
@@ -41,16 +43,25 @@ class GraphEngine {
   private highlightNodes = new Set<string>();
   private animationId = 0;
   private disposed = false;
+  private isLight: boolean;
+  private labels: {
+    sprite: THREE.Sprite;
+    canvas: HTMLCanvasElement;
+    text: string;
+  }[] = [];
+  private ambientLight!: THREE.AmbientLight;
   onSelect: ((info: SelectedNodeInfo | null) => void) | null = null;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, isLight: boolean) {
     this.container = container;
+    this.isLight = isLight;
     const width = container.clientWidth;
     const height = container.clientHeight;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0f1117);
-    this.scene.fog = new THREE.Fog(0x0f1117, 200, 800);
+    const bg = isLight ? 0xe4eae6 : 0x0f1117;
+    this.scene.background = new THREE.Color(bg);
+    this.scene.fog = new THREE.Fog(bg, 200, 800);
 
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
     this.camera.position.set(0, 0, 120);
@@ -64,7 +75,8 @@ class GraphEngine {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    const ambientLight = new THREE.AmbientLight(0xffffff, isLight ? 0.75 : 0.4);
+    this.ambientLight = ambientLight;
     this.scene.add(ambientLight);
     const pointLight = new THREE.PointLight(0xffffff, 1, 300);
     pointLight.position.set(50, 50, 50);
@@ -147,9 +159,13 @@ class GraphEngine {
       }
 
       // 精灵标签
-      const label = createTextSprite(node.name.split("/").pop() || node.name);
-      label.position.copy(pos).add(new THREE.Vector3(0, radius + 2, 0));
-      this.nodeGroup.add(label);
+      const label = createTextSprite(
+        node.name.split("/").pop() || node.name,
+        this.isLight,
+      );
+      label.sprite.position.copy(pos).add(new THREE.Vector3(0, radius + 2, 0));
+      this.nodeGroup.add(label.sprite);
+      this.labels.push(label);
     }
     this.scene.add(this.nodeGroup);
 
@@ -167,7 +183,7 @@ class GraphEngine {
         toPos,
       ]);
       const material = new THREE.LineBasicMaterial({
-        color: 0x3a4156,
+        color: this.isLight ? 0x8fa0b0 : 0x3a4156,
         opacity: Math.max(0.15, 0.4 - depth * 0.08),
         transparent: true,
       });
@@ -292,6 +308,7 @@ class GraphEngine {
     this.nodeMeshes = [];
     this.edgeLines = [];
     this.pulseNodes = [];
+    this.labels = [];
     this.highlightNodes.clear();
   }
 
@@ -352,10 +369,35 @@ class GraphEngine {
   private onWindowResize = () => {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    // 隐藏挂载（display:none）时容器尺寸为 0，跳过避免 aspect 变为 NaN
+    if (w === 0 || h === 0) return;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   };
+
+  /** 供 ResizeObserver 调用：容器从隐藏切换为可见时重设画布尺寸 */
+  resize() {
+    this.onWindowResize();
+  }
+
+  /** 主题切换：更新场景底色/雾/环境光/边线/节点标签配色（与 .light 容器底色 #e4eae6 对齐） */
+  setTheme(isLight: boolean) {
+    if (this.isLight === isLight) return;
+    this.isLight = isLight;
+    const bg = isLight ? 0xe4eae6 : 0x0f1117;
+    this.scene.background = new THREE.Color(bg);
+    this.scene.fog = new THREE.Fog(bg, 200, 800);
+    this.ambientLight.intensity = isLight ? 0.75 : 0.4;
+    const edgeColor = isLight ? 0x8fa0b0 : 0x3a4156;
+    for (const line of this.edgeLines) {
+      (line.material as THREE.LineBasicMaterial).color.setHex(edgeColor);
+    }
+    for (const l of this.labels) {
+      paintLabel(l.canvas, l.text, isLight);
+      (l.sprite.material as THREE.SpriteMaterial).map!.needsUpdate = true;
+    }
+  }
 }
 
 function getHealthColor(score: number): THREE.Color {
@@ -377,18 +419,25 @@ function computeNodePosition(depth: number): THREE.Vector3 {
   );
 }
 
-function createTextSprite(text: string): THREE.Sprite {
-  const canvas = document.createElement("canvas");
+/** 在标签画布上绘制文字（主题感知：浅底深字 / 暗底浅字） */
+function paintLabel(canvas: HTMLCanvasElement, text: string, light: boolean) {
   const ctx = canvas.getContext("2d")!;
-  canvas.width = 256;
-  canvas.height = 64;
-  ctx.fillStyle = "rgba(0,0,0,0)";
-  ctx.fillRect(0, 0, 256, 64);
+  ctx.clearRect(0, 0, 256, 64);
   ctx.font = 'bold 28px Sora, -apple-system, "Segoe UI", sans-serif';
-  ctx.fillStyle = "#e2e8f0";
+  ctx.fillStyle = light ? "#1c2f23" : "#e2e8f0";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, 128, 32);
+}
+
+function createTextSprite(
+  text: string,
+  light: boolean,
+): { sprite: THREE.Sprite; canvas: HTMLCanvasElement; text: string } {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  paintLabel(canvas, text, light);
 
   const texture = new THREE.CanvasTexture(canvas);
   const material = new THREE.SpriteMaterial({
@@ -397,12 +446,12 @@ function createTextSprite(text: string): THREE.Sprite {
   });
   const sprite = new THREE.Sprite(material);
   sprite.scale.set(12, 3, 1);
-  return sprite;
+  return { sprite, canvas, text };
 }
 
 // ===== React 组件 =====
 export function GraphView() {
-  const { lastGraph, lastResult } = useApp();
+  const { lastGraph, lastResult, theme } = useApp();
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<GraphEngine | null>(null);
   const [selected, setSelected] = useState<SelectedNodeInfo | null>(null);
@@ -411,14 +460,27 @@ export function GraphView() {
   // 初始化引擎（仅一次）
   useEffect(() => {
     if (!containerRef.current) return;
-    const engine = new GraphEngine(containerRef.current);
+    const engine = new GraphEngine(
+      containerRef.current,
+      document.documentElement.classList.contains("light"),
+    );
     engine.onSelect = setSelected;
     engineRef.current = engine;
+    // App 以 hidden 属性同时挂载四个视图：Graph 隐藏时容器为 0×0，
+    // 监听容器尺寸变化，切到 graph 视图时自动 resize 恢复画布
+    const ro = new ResizeObserver(() => engine.resize());
+    ro.observe(containerRef.current);
     return () => {
+      ro.disconnect();
       engine.dispose();
       engineRef.current = null;
     };
   }, []);
+
+  // 主题切换：同步 3D 场景底色/边线/标签配色
+  useEffect(() => {
+    engineRef.current?.setTheme(theme === "light");
+  }, [theme]);
 
   // 数据更新
   useEffect(() => {
@@ -457,109 +519,125 @@ export function GraphView() {
   const healthLabel = !selected
     ? ""
     : selected.health >= 80
-      ? "健康"
+      ? "Healthy"
       : selected.health >= 60
-        ? "警告"
-        : "危险";
+        ? "Warning"
+        : "At Risk";
 
   return (
-    <div className="relative h-[calc(100vh-3.5rem)] w-full overflow-hidden">
-      {/* 3D 画布 */}
-      <div ref={containerRef} className="absolute inset-0" />
+    <WorkbenchShell
+      view="graph"
+      title="3D Dependency Graph"
+      subtitle="Interactive force-directed graph visualization of your dependency tree"
+      actions={<ShareButton />}
+    >
+      <div className="workbench-graph-container">
+        {/* 3D 画布 */}
+        <div ref={containerRef} className="absolute inset-0" />
 
-      {/* 浮动工具栏 */}
-      <div className="absolute left-1/2 top-4 z-10 flex w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 items-center gap-2 rounded-lg border border-border bg-background/70 p-2 backdrop-blur-md">
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={onSearchKeyDown}
-          placeholder="搜索节点，回车定位"
-          className="bg-transparent font-mono text-xs"
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onHighlight}
-          title="高亮该节点的全部下游依赖"
-        >
-          <Route className="h-4 w-4" />
-          <span className="hidden sm:inline">依赖路径</span>
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onReset}
-          title="重置视角并清除高亮"
-        >
-          <RotateCcw className="h-4 w-4" />
-          <span className="hidden sm:inline">重置</span>
-        </Button>
+        {/* 浮动工具栏 */}
+        <div className="workbench-graph-toolbar">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={onSearchKeyDown}
+            placeholder="Search nodes, Enter to focus"
+            className="workbench-graph-search font-mono text-xs"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onHighlight}
+            title="Highlight all downstream dependencies of this node"
+            className="workbench-graph-btn"
+          >
+            <Route className="h-4 w-4" />
+            <span className="hidden sm:inline">Dep Path</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onReset}
+            title="Reset camera and clear highlights"
+            className="workbench-graph-btn"
+          >
+            <RotateCcw className="h-4 w-4" />
+            <span className="hidden sm:inline">Reset</span>
+          </Button>
+        </div>
+
+        {/* 选中信息提示 */}
+        {selected && (
+          <div className="workbench-graph-info">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h4 className="break-all font-mono text-sm font-semibold">
+                {selected.node.id}
+              </h4>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setSelected(null);
+                  engineRef.current?.clearHighlights();
+                }}
+                aria-label="Close details"
+              >
+                <Crosshair className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Health Score</span>
+                <span className={`font-semibold ${healthClass}`}>
+                  {selected.health} ({healthLabel})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Depth</span>
+                <span className="tabular-nums">{selected.node.depth}</span>
+              </div>
+              {selected.meta && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">License</span>
+                    <span>{selected.meta.license || "Not declared"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">
+                      Latest Version
+                    </span>
+                    <span className="font-mono">
+                      {selected.meta.latest_version || selected.node.version}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Size</span>
+                    <span className="tabular-nums">
+                      {fmtBytes(selected.meta.self_size || 0)}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 空数据提示 */}
+        {!lastGraph && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center">
+            <div className="workbench-empty workbench-graph-empty">
+              <div className="workbench-empty-icon">
+                <Route className="h-10 w-10" />
+              </div>
+              <h3 className="workbench-empty-title">No graph data</h3>
+              <p className="workbench-empty-text">
+                Complete an analysis in the Analyze view to visualize your
+                dependency graph
+              </p>
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* 选中信息提示 */}
-      {selected && (
-        <div className="absolute bottom-4 left-4 z-10 max-w-xs animate-fade-in rounded-lg border border-border bg-background/80 p-4 backdrop-blur-md">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h4 className="break-all font-mono text-sm font-semibold">
-              {selected.node.id}
-            </h4>
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                setSelected(null);
-                engineRef.current?.clearHighlights();
-              }}
-              aria-label="关闭详情"
-            >
-              <Crosshair className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">健康分</span>
-              <span className={`font-semibold ${healthClass}`}>
-                {selected.health}（{healthLabel}）
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">深度</span>
-              <span className="tabular-nums">{selected.node.depth}</span>
-            </div>
-            {selected.meta && (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">许可证</span>
-                  <span>{selected.meta.license || "未声明"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">最新版本</span>
-                  <span className="font-mono">
-                    {selected.meta.latest_version || selected.node.version}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">体积</span>
-                  <span className="tabular-nums">
-                    {fmtBytes(selected.meta.self_size || 0)}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 空数据提示 */}
-      {!lastGraph && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <div className="rounded-lg border border-border bg-background/80 px-6 py-8 text-center backdrop-blur-md">
-            <p className="text-sm text-muted-foreground">
-              暂无图数据，请先在 Analyze 视图完成一次分析
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
+    </WorkbenchShell>
   );
 }
