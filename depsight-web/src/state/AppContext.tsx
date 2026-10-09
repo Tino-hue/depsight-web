@@ -12,6 +12,15 @@ import {
 
 import { useAnalyzer } from "@/hooks/useAnalyzer";
 import { useWasm as useWasmHook } from "@/hooks/useWasm";
+import {
+  decodeSharePayload,
+  encodeSharePayload,
+  loadHistory,
+  makeEntry,
+  removeHistoryEntry,
+  saveHistory,
+  type HistoryEntry,
+} from "@/lib/history";
 import type {
   AnalysisContext,
   AnalysisResult,
@@ -36,10 +45,11 @@ const VALID_VIEWS: AppView[] = [
   "ecosystem",
 ];
 
-/** 从 #hash 解析初始视图（默认 hero 落地首页） */
+/** 从 #hash 解析初始视图（默认 hero 落地首页；#share= 视为 analyze） */
 function viewFromHash(): AppView {
   if (typeof window === "undefined") return "hero";
   const h = window.location.hash.replace("#", "");
+  if (h.startsWith("share=")) return "analyze";
   return (VALID_VIEWS as string[]).includes(h) ? (h as AppView) : "hero";
 }
 
@@ -92,6 +102,12 @@ interface AppContextValue {
   lastGraph: DepGraph | null;
   lastRootMod: ParsedMod | null;
   trends: TrendMap;
+  // 分析历史（localStorage 持久化）
+  history: HistoryEntry[];
+  removeHistory: (id: string) => void;
+  // 分享
+  createShareUrl: (result?: AnalysisResult) => Promise<string>;
+  copyShareUrl: (result?: AnalysisResult) => Promise<boolean>;
   // 路由
   view: AppView;
   setView: (view: AppView) => void;
@@ -134,11 +150,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTheme((t) => (t === "dark" ? "light" : "dark"));
   }, []);
 
+  // 首次渲染即捕获初始 hash（早于一切 effect；#share= 解码依赖它，
+  // 否则下方 hash 同步 effect 会先把它替换成 #analyze）
+  const [initialHash] = useState(() => window.location.hash);
+
   // 视图 ⇄ #hash 双向同步：可分享、可后退、刷新不丢
+  // #share= 属于外部输入，同步后清除（避免覆盖历史 hash 状态）
   useEffect(() => {
+    if (window.location.hash.startsWith("#share=")) {
+      window.history.replaceState(null, "", "#analyze");
+    }
     const target = view === "hero" ? "#hero" : `#${view}`;
     if (window.location.hash !== target) {
-      history.replaceState(null, "", target);
+      window.history.replaceState(null, "", target);
     }
   }, [view]);
 
@@ -155,12 +179,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [lastGraph, setLastGraph] = useState<DepGraph | null>(null);
   const [lastRootMod, setLastRootMod] = useState<ParsedMod | null>(null);
   const [trends, setTrends] = useState<TrendMap>(loadStoredTrends);
+  const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+
+  // 启动时恢复最近一次分析（刷新不丢）；#share= 优先（外部分享链接）
+  useEffect(() => {
+    let cancelled = false;
+    const hash = initialHash;
+    if (hash.startsWith("#share=")) {
+      decodeSharePayload(hash.slice("#share=".length)).then((result) => {
+        if (cancelled || !result) return;
+        setLastResult(result);
+        setLastGraph(result.graph ?? null);
+        setLastRootMod(result._root_mod ?? null);
+      });
+      return;
+    }
+    const entries = loadHistory();
+    const latest = entries[0];
+    if (latest) {
+      setLastResult(latest.result);
+      setLastGraph(latest.result.graph ?? null);
+      setLastRootMod(latest.result._root_mod ?? null);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const applyResult = useCallback((result: AnalysisResult): boolean => {
     if (result.error) return false;
     setLastResult(result);
     setLastGraph(result.graph);
     setLastRootMod(result._root_mod ?? null);
+
+    // 持久化分析历史（localStorage）
+    const entry = makeEntry(result, "analysis");
+    setHistory((prev) => {
+      const next = [entry, ...prev];
+      saveHistory(next);
+      return next;
+    });
 
     // 记录趋势：同一天去重（与 js/trends.js recordTrend 一致）
     const root = result._root_mod;
@@ -183,6 +241,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const removeHistory = useCallback((id: string) => {
+    setHistory(removeHistoryEntry(id));
+  }, []);
+
+  // 生成可分享链接：结果 JSON → deflate → base64url → #share=<payload>
+  const createShareUrl = useCallback(
+    async (result?: AnalysisResult) => {
+      const target = result ?? lastResult;
+      if (!target) return window.location.href;
+      const payload = await encodeSharePayload(target);
+      return `${window.location.origin}${window.location.pathname}#share=${payload}`;
+    },
+    [lastResult],
+  );
+
+  const copyShareUrl = useCallback(
+    async (result?: AnalysisResult) => {
+      const url = await createShareUrl(result);
+      try {
+        await navigator.clipboard.writeText(url);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [createShareUrl],
+  );
+
   const requestAi = useCallback((task: Omit<AiTask, "id">) => {
     setAiTask({ ...task, id: Date.now() });
     setAiOpen(true);
@@ -199,6 +285,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       lastGraph,
       lastRootMod,
       trends,
+      history,
+      removeHistory,
+      createShareUrl,
+      copyShareUrl,
       view,
       setView,
       theme,
@@ -218,6 +308,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       lastGraph,
       lastRootMod,
       trends,
+      history,
+      removeHistory,
+      createShareUrl,
+      copyShareUrl,
       view,
       theme,
       toggleTheme,
