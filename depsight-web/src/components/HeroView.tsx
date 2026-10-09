@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 
 import { useApp } from "@/state/AppContext";
 import { cn } from "@/lib/utils";
+import { LandingSections } from "@/components/LandingSections";
 import { WarpText } from "@/components/ui/warp-text";
 import { ShinyButton } from "@/components/ui/shiny-button";
 import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
@@ -320,6 +321,9 @@ export function HeroView() {
           </span>
         </footer>
       </div>
+
+      {/* 首屏下方：滚动落地区块（Features / How it works / Tech stack / Footer） */}
+      <LandingSections />
     </div>
   );
 }

@@ -66,7 +66,7 @@ export function Navbar() {
               !lastResult &&
                 "cursor-not-allowed opacity-40 hover:text-muted-foreground",
             )}
-            title={lastResult ? "AI 智能诊断" : "先完成一次分析"}
+            title={lastResult ? "AI Diagnosis" : "Run an analysis first"}
           >
             <Sparkles className="h-3.5 w-3.5" />
             AI
