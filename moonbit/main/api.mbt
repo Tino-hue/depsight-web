@@ -1,6 +1,20 @@
-﻿/// depsight WASM API —— 浏览器可调用的依赖健康分析入口。
+/// depsight WASM API —— 浏览器可调用的依赖健康分析入口。
 ///
-/// # 调用契约（与 js/js-analyzer.js 完全一致）
+/// # 调用契约（与 src/lib/analyzer.ts JS fallback 完全一致）
+///
+/// 本模块以 wasm-gc 后端编译，并在 moon.pkg 中开启 `use-js-builtin-string`：
+/// 导出的 `String` 参数/返回值通过 `wasm:js-string` 内建直接映射为 JS string，
+/// JS 侧可直接 `exports.analyze_from_context_json(jsonString)`，无需任何编解码。
+///
+/// JS 侧加载方式：
+///
+/// ```js
+/// const { instance } = await WebAssembly.instantiateStreaming(
+///   fetch("./depsight.wasm"),
+///   {},
+///   { builtins: ["js-string"], importedStringConstants: "_" },
+/// );
+/// ```
 ///
 /// JS 侧组装一个 JSON 字符串传给 `analyze_from_context_json`：
 ///
@@ -23,9 +37,13 @@
 /// ```
 ///
 /// 返回 JSON：overall_score / node_count / diagnostics / health_scores /
-///           summary / graph / size_offenders_top5 / node_metas / ecosystem_stats
+///           summary / graph / _root_mod / size_offenders_top5 /
+///           node_metas / ecosystem_stats
 ///
 /// # 编译
+///
+/// moon.pkg 需开启 `"use-js-builtin-string": true`（wasm-gc link 选项），
+/// 否则 String 会编译为 wasm-gc 私有数组类型，JS 无法直接传参/取值。
 ///
 /// ```bash
 /// moon build --target wasm-gc --release
@@ -1078,6 +1096,30 @@ fn assemble_result(
   buf.write_string(",\"graph\":")
   buf.write_string(serialize_graph(graph))
 
+  // _root_mod（前端趋势记录 / AI 抽屉 prompt 用）：root 节点 + 其 meta 的 license
+  let mut root_name = "unknown"
+  let mut root_version = "0.0.0"
+  for n in graph.nodes {
+    if n.id == graph.root_id {
+      root_name = n.name
+      root_version = n.version
+    }
+  }
+  let root_license = match metas.get(graph.root_id) {
+    Some(m) => m.license
+    None => None
+  }
+  buf.write_string(",\"_root_mod\":{\"name\":")
+  buf.write_string(json_str(root_name))
+  buf.write_string(",\"version\":")
+  buf.write_string(json_str(root_version))
+  buf.write_string(",\"license\":")
+  match root_license {
+    Some(l) => buf.write_string(json_str(l))
+    None => buf.write_string("null")
+  }
+  buf.write_string("}")
+
   // size_offenders_top5
   buf.write_string(",\"size_offenders_top5\":[")
   let mut k = 0
@@ -1284,150 +1326,4 @@ fn format_double_2(d : Double) -> String {
 /// 构造错误响应
 fn make_error_json(msg : String) -> String {
   "{\"error\":" + json_str(msg) + "}"
-}
-
-// ========== Bytes ABI 辅助（JS 侧用 Uint8Array 传递） ==========
-
-///|
-/// Bytes -> String（UTF-8 解码，逐字节构建）
-fn bytes_to_string(b : Bytes) -> String {
-  let len = b.length()
-  let buf = StringBuilder()
-  let mut i = 0
-  while i < len {
-    let byte = b[i].to_int()
-    if byte < 0x80 {
-      // ASCII 单字节
-      buf.write_char(byte.unsafe_to_char())
-      i = i + 1
-    } else if byte < 0xE0 {
-      // 2 字节 UTF-8
-      if i + 1 < len {
-        let b1 = b[i + 1].to_int()
-        let code = ((byte & 0x1F) << 6) | (b1 & 0x3F)
-        buf.write_char(code.unsafe_to_char())
-        i = i + 2
-      } else {
-        i = i + 1
-      }
-    } else if byte < 0xF0 {
-      // 3 字节 UTF-8
-      if i + 2 < len {
-        let b1 = b[i + 1].to_int()
-        let b2 = b[i + 2].to_int()
-        let code = ((byte & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)
-        buf.write_char(code.unsafe_to_char())
-        i = i + 3
-      } else {
-        i = i + 1
-      }
-    } else {
-      // 4 字节 UTF-8
-      if i + 3 < len {
-        let b1 = b[i + 1].to_int()
-        let b2 = b[i + 2].to_int()
-        let b3 = b[i + 3].to_int()
-        let code = ((byte & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)
-        buf.write_char(code.unsafe_to_char())
-        i = i + 4
-      } else {
-        i = i + 1
-      }
-    }
-  }
-  buf.to_string()
-}
-
-///|
-/// Int -> Byte（截断到低 8 位）
-fn int_to_byte(n : Int) -> Byte {
-  // 通过 FixedArray[Byte] 构造
-  let arr : FixedArray[Byte] = FixedArray::make(1, b'\x00')
-  // 用 unsafe cast via Int -> Byte
-  arr[0] = (n & 0xFF).to_byte()
-  arr[0]
-}
-
-///|
-/// String -> Bytes（UTF-8 编码）
-fn string_to_bytes(s : String) -> Bytes {
-  let mut total = 0
-  // 先计算 UTF-8 字节数
-  for c in s {
-    let code = c.to_int()
-    if code < 0x80 {
-      total = total + 1
-    } else if code < 0x800 {
-      total = total + 2
-    } else if code < 0x10000 {
-      total = total + 3
-    } else {
-      total = total + 4
-    }
-  }
-  // 填充字节
-  let buf = FixedArray::make(total, b'\x00')
-  let mut pos = 0
-  for c in s {
-    let code = c.to_int()
-    if code < 0x80 {
-      buf[pos] = int_to_byte(code)
-      pos = pos + 1
-    } else if code < 0x800 {
-      buf[pos] = int_to_byte(0xC0 | (code >> 6))
-      buf[pos + 1] = int_to_byte(0x80 | (code & 0x3F))
-      pos = pos + 2
-    } else if code < 0x10000 {
-      buf[pos] = int_to_byte(0xE0 | (code >> 12))
-      buf[pos + 1] = int_to_byte(0x80 | ((code >> 6) & 0x3F))
-      buf[pos + 2] = int_to_byte(0x80 | (code & 0x3F))
-      pos = pos + 3
-    } else {
-      buf[pos] = int_to_byte(0xF0 | (code >> 18))
-      buf[pos + 1] = int_to_byte(0x80 | ((code >> 12) & 0x3F))
-      buf[pos + 2] = int_to_byte(0x80 | ((code >> 6) & 0x3F))
-      buf[pos + 3] = int_to_byte(0x80 | (code & 0x3F))
-      pos = pos + 4
-    }
-  }
-  Bytes::from_array(buf)
-}
-
-///|
-/// 主入口（Bytes 版）：从完整上下文运行分析，返回 JSON 的 UTF-8 字节。
-#export_name("analyze_from_context_json_bytes")
-pub fn analyze_from_context_json_bytes(context_json : Bytes) -> Bytes {
-  let input = bytes_to_string(context_json)
-  let output = match run_analysis(input) {
-    Ok(json) => json
-    Err(msg) => make_error_json(msg)
-  }
-  string_to_bytes(output)
-}
-
-///|
-/// 便捷入口（Bytes 版）：仅分析单个 moon.mod / moon.mod.json。
-#export_name("analyze_from_mod_text_bytes")
-pub fn analyze_from_mod_text_bytes(mod_text : Bytes) -> Bytes {
-  let input = bytes_to_string(mod_text)
-  let output = match parse_mod_text(input) {
-    Ok(root) => {
-      let graph = build_shallow_graph(root)
-      let metas = build_shallow_metas(graph, root)
-      let health_scores = compute_health_scores(graph, metas)
-      let diags = run_diagnostics(graph, metas)
-      let size_offenders = compute_size_offenders(graph, metas)
-      let stats = compute_ecosystem_stats(graph, health_scores, metas)
-      assemble_result(graph, health_scores, diags, size_offenders, stats, metas)
-    }
-    Err(msg) => make_error_json(msg)
-  }
-  string_to_bytes(output)
-}
-
-///|
-/// 版本号（Bytes 版）
-#export_name("version_bytes")
-pub fn version_bytes() -> Bytes {
-  string_to_bytes("0.6.0-wasm")
 }

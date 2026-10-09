@@ -1,4 +1,15 @@
 pkgtype(kind: "foreign_library")
-import (
-  "moonbitlang/core/json"
+
+import {
+  "moonbitlang/core/json",
+}
+
+// wasm-gc + JS string builtins：导出的 String 参数/返回值直接映射为 JS string，
+// 浏览器/Node 侧 instantiate 时需传 compileOptions { builtins: ["js-string"], importedStringConstants: "_" }
+options(
+  "link": {
+    "wasm-gc": {
+      "use-js-builtin-string": true,
+    },
+  },
 )

@@ -1,172 +1,153 @@
-// WASM 加载器：尝试加载 depsight.wasm，失败回退到纯 JS 实现
-// WASM 文件由 MoonBit 编译产物（public/depsight.wasm）提供，
-// 如果不存在则使用 JS 端的 fallback analyzer（行为与 WASM API 一致）。
-// 从 js/wasm-loader.js 迁移
+// WASM 加载器：加载 depsight.wasm（MoonBit wasm-gc + js-string builtins），失败回退纯 JS 实现
+// WASM 由 d:\MoonStep\moonbit 编译产出（moon build --target wasm-gc --release），
+// 开启 use-js-builtin-string 后，导出的 String 参数/返回值直接映射为 JS string：
+//   JS 侧可直接调用 exports.analyze_from_context_json(jsonString: string): string
+// 加载时必须传 compileOptions { builtins: ['js-string'], importedStringConstants: '_' }，
+// 否则模块内 wasm:js-string 导入与 "_" 字符串常量模块无法解析。
 
-import type { WasmInitResult } from './types'
+import type { WasmInitResult } from "./types";
 
-let wasmInstance: WebAssembly.Instance | null = null
-let wasmModule: WebAssembly.Module | null = null
-let useWasm = false
+let wasmInstance: WebAssembly.Instance | null = null;
+let useWasm = false;
+
+// TS lib.dom 尚未内置 WebAssembly compile options 类型，这里本地声明
+interface WasmCompileOptions {
+  builtins?: string[];
+  importedStringConstants?: string;
+}
 
 export async function initWasm(): Promise<WasmInitResult> {
   try {
-    const resp = await fetch('./depsight.wasm')
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    const bytes = await resp.arrayBuffer()
+    const resp = await fetch("./depsight.wasm");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const bytes = await resp.arrayBuffer();
 
-    // MoonBit wasm-gc 编译产物是 WASI 风格，导入最少宿主函数
-    const imports = buildWasiImports()
-    const mod = await WebAssembly.instantiate(bytes, imports)
-    wasmModule = mod.module
-    wasmInstance = mod.instance
+    const compileOptions: WasmCompileOptions = {
+      builtins: ["js-string"],
+      importedStringConstants: "_",
+    };
+    // 走 bytes 重载：builtins 需在编译期声明（TS lib 尚未收录三参签名，本地断言）
+    const instantiateWithOptions = WebAssembly.instantiate as unknown as (
+      bytes: BufferSource,
+      imports?: WebAssembly.Imports,
+      options?: WasmCompileOptions,
+    ) => Promise<WebAssembly.WebAssemblyInstantiatedSource>;
+    // MoonBit 该模块无宿主函数导入（wasm:js-string 与 "_" 常量由引擎按 compileOptions 提供）
+    const { module: mod, instance } = await instantiateWithOptions(
+      bytes,
+      {},
+      compileOptions,
+    );
+    wasmInstance = instance;
 
-    // 检查导出（MoonBit wasm-gc 导出形态可能是 __moonbit_* 或 analyze_from_context_json）
-    const exports = WebAssembly.Module.exports(wasmModule)
+    // 检查导出（应为 analyze_from_context_json / analyze_from_mod_text / version）
+    const exports = WebAssembly.Module.exports(mod);
     console.log(
-      '[wasm-loader] All exports:',
+      "[wasm-loader] All exports:",
       exports.map((e) => `${e.name}: ${e.kind}`),
-    )
+    );
 
     const hasAnalyze = exports.some(
-      (e) =>
-        e.name === 'analyze_from_context_json_bytes' ||
-        e.name.includes('analyze_from_context'),
-    )
+      (e) => e.name === "analyze_from_context_json" && e.kind === "function",
+    );
     if (!hasAnalyze) {
       console.warn(
-        '[wasm-loader] analyze_from_context_json not in exports, falling back to JS',
+        "[wasm-loader] analyze_from_context_json not in exports, falling back to JS",
         exports,
-      )
-      useWasm = false
+      );
+      useWasm = false;
     } else {
-      // 尝试调用 version_bytes() 测试 Bytes ABI
+      // 探测 String ABI：version() 应直接返回 JS string
       try {
-        const exportsObj = wasmInstance.exports as Record<string, unknown>
-        const v = (exportsObj.version_bytes as () => unknown)()
-        console.log(
-          '[wasm-loader] version_bytes() returned:',
-          v,
-          typeof v,
-          v instanceof Uint8Array,
-        )
-        if (v instanceof Uint8Array) {
-          const decoder = new TextDecoder()
-          console.log('[wasm-loader] version string:', decoder.decode(v))
-          useWasm = true
+        const exportsObj = wasmInstance.exports as Record<string, unknown>;
+        const v = (exportsObj.version as () => unknown)?.();
+        if (typeof v === "string") {
+          console.log("[wasm-loader] version string:", v);
+          useWasm = true;
         } else {
           console.warn(
-            '[wasm-loader] version_bytes() did not return Uint8Array',
-          )
-          useWasm = false
+            "[wasm-loader] version() did not return a JS string (wasm not built with use-js-builtin-string?)",
+            v,
+          );
+          useWasm = false;
         }
       } catch (e) {
         console.warn(
-          '[wasm-loader] version_bytes() call failed:',
+          "[wasm-loader] version() call failed:",
           e instanceof Error ? e.message : String(e),
-        )
-        useWasm = false
+        );
+        useWasm = false;
       }
     }
   } catch (e) {
     console.warn(
-      '[wasm-loader] Failed to load WASM, falling back to JS:',
+      "[wasm-loader] Failed to load WASM, falling back to JS:",
       e instanceof Error ? e.message : String(e),
-    )
-    useWasm = false
+    );
+    useWasm = false;
   }
 
   return {
     instance: wasmInstance,
     useWasm,
-    status: useWasm ? 'loaded' : 'fallback',
-  }
+    status: useWasm ? "loaded" : "fallback",
+  };
 }
 
-function buildWasiImports(): WebAssembly.Imports {
-  // 最小 WASI + 自定义宿主函数
-  const noop = () => 0
-  return {
-    wasi_snapshot_preview1: {
-      proc_exit: (code: number) => {
-        throw new Error(`WASM proc_exit: ${code}`)
-      },
-      fd_write: noop,
-      fd_close: noop,
-      fd_seek: noop,
-      fd_read: noop,
-      fd_fdstat_get: noop,
-      fd_fdstat_set_flags: noop,
-      clock_time_get: () => 0n,
-      random_get: () => 0,
-      poll_oneoff: noop,
-      sched_yield: noop,
-      path_open: noop,
-      path_filestat_get: noop,
-      path_readlink: noop,
-      path_create_directory: noop,
-      path_remove_directory: noop,
-      path_unlink_file: noop,
-      path_rename: noop,
-      path_symlink: noop,
-      path_link: noop,
-      path_filestat_set_size: noop,
-      path_filestat_set_times: noop,
-      fd_filestat_get: noop,
-      fd_filestat_set_size: noop,
-      fd_filestat_set_times: noop,
-      fd_renumber: noop,
-      fd_advise: noop,
-      fd_allocate: noop,
-      fd_datasync: noop,
-      fd_prestat_get: noop,
-      fd_prestat_dir_name: noop,
-      fd_readdir: noop,
-      fd_readlink: noop,
-      fd_sync: noop,
-      fd_tell: noop,
-    },
-    // 自定义宿主函数：MoonBit 通过 externref / string 与 JS 交互
-    env: {
-      js_log: (ptr: unknown, len: unknown) => {
-        console.log('[wasm]', ptr, len)
-      },
-    },
-  }
-}
-
-// 调用 WASM 导出的 analyze_from_context_json_bytes
+// 调用 WASM 导出的 analyze_from_context_json（String ABI：JS string 直传直取）
 export function callWasmAnalyze(contextJson: string): string | null {
   if (!useWasm || !wasmInstance) {
-    return null
+    return null;
   }
   try {
-    const fn = (
-      wasmInstance.exports as Record<string, unknown>
-    ).analyze_from_context_json_bytes
-    if (typeof fn !== 'function') {
-      console.warn(
-        '[wasm-loader] analyze_from_context_json_bytes is not a function',
-      )
-      return null
+    const fn = (wasmInstance.exports as Record<string, unknown>)
+      .analyze_from_context_json;
+    if (typeof fn !== "function") {
+      console.warn("[wasm-loader] analyze_from_context_json is not a function");
+      return null;
     }
-    // 将 JS string 转为 Uint8Array
-    const encoder = new TextEncoder()
-    const inputBytes = encoder.encode(contextJson)
-    const resultBytes = (fn as (input: Uint8Array) => unknown)(inputBytes)
-    // 将返回的 Uint8Array 转回 JS string
-    if (resultBytes instanceof Uint8Array) {
-      const decoder = new TextDecoder()
-      return decoder.decode(resultBytes)
+    const result = (fn as (input: string) => unknown)(contextJson);
+    if (typeof result === "string") {
+      console.log(
+        "[wasm-loader] analysis computed by WASM (analyze_from_context_json)",
+      );
+      return result;
     }
-    console.warn('[wasm-loader] WASM returned non-Uint8Array:', resultBytes)
-    return null
+    console.warn("[wasm-loader] WASM returned non-string:", result);
+    return null;
   } catch (e) {
-    console.error('[wasm-loader] WASM call failed:', e)
-    return null
+    console.error("[wasm-loader] WASM call failed:", e);
+    return null;
+  }
+}
+
+// 调用 WASM 导出的 analyze_from_mod_text（单 moon.mod 文本，不递归依赖）
+export function callWasmAnalyzeModText(modText: string): string | null {
+  if (!useWasm || !wasmInstance) {
+    return null;
+  }
+  try {
+    const fn = (wasmInstance.exports as Record<string, unknown>)
+      .analyze_from_mod_text;
+    if (typeof fn !== "function") {
+      console.warn("[wasm-loader] analyze_from_mod_text is not a function");
+      return null;
+    }
+    const result = (fn as (input: string) => unknown)(modText);
+    if (typeof result === "string") {
+      console.log(
+        "[wasm-loader] analysis computed by WASM (analyze_from_mod_text)",
+      );
+      return result;
+    }
+    console.warn("[wasm-loader] WASM returned non-string:", result);
+    return null;
+  } catch (e) {
+    console.error("[wasm-loader] WASM call failed:", e);
+    return null;
   }
 }
 
 export function isWasmAvailable(): boolean {
-  return useWasm
+  return useWasm;
 }
