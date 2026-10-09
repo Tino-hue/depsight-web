@@ -20,113 +20,113 @@ import type {
   ParsedMod,
   Severity,
   SizeOffender,
-} from './types'
+} from "./types";
 
 // ===== moon.mod 解析 =====
 
 /** 解析 moon.mod（TOML 简化语法）或 moon.mod.json */
 export function parseMod(text: string): ParsedMod {
-  const trimmed = text.trim()
-  if (trimmed.startsWith('{')) {
-    return parseModJson(trimmed)
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) {
+    return parseModJson(trimmed);
   }
-  return parseModToml(trimmed)
+  return parseModToml(trimmed);
 }
 
 function parseModJson(text: string): ParsedMod {
   try {
-    const obj = JSON.parse(text) as Record<string, unknown>
+    const obj = JSON.parse(text) as Record<string, unknown>;
     return {
-      name: (obj.name as string) || 'unknown',
-      version: (obj.version as string) || '0.0.0',
+      name: (obj.name as string) || "unknown",
+      version: (obj.version as string) || "0.0.0",
       license: (obj.license as string) || null,
       deps: normalizeDeps((obj.deps as Record<string, string>) || {}),
-    }
+    };
   } catch (e) {
     return {
-      name: 'unknown',
-      version: '0.0.0',
+      name: "unknown",
+      version: "0.0.0",
       license: null,
       deps: {},
       parse_error: e instanceof Error ? e.message : String(e),
-    }
+    };
   }
 }
 
 function parseModToml(text: string): ParsedMod {
   const result: ParsedMod = {
-    name: 'unknown',
-    version: '0.0.0',
+    name: "unknown",
+    version: "0.0.0",
     license: null,
     deps: {},
-  }
-  const lines = text.split('\n')
-  let inImport = false
+  };
+  const lines = text.split("\n");
+  let inImport = false;
 
   for (const raw of lines) {
-    let line = raw.trim()
+    let line = raw.trim();
     // 去注释
-    const hashIdx = line.indexOf('#')
-    if (hashIdx >= 0) line = line.substring(0, hashIdx).trim()
-    if (!line) continue
+    const hashIdx = line.indexOf("#");
+    if (hashIdx >= 0) line = line.substring(0, hashIdx).trim();
+    if (!line) continue;
 
-    if (line.startsWith('name') && line.includes('=')) {
-      result.name = stripQuotes(line.split('=')[1].trim())
-    } else if (line.startsWith('version') && line.includes('=')) {
-      result.version = stripQuotes(line.split('=')[1].trim())
-    } else if (line.startsWith('license') && line.includes('=')) {
-      result.license = stripQuotes(line.split('=')[1].trim())
-    } else if (line.startsWith('import')) {
-      inImport = true
+    if (line.startsWith("name") && line.includes("=")) {
+      result.name = stripQuotes(line.split("=")[1].trim());
+    } else if (line.startsWith("version") && line.includes("=")) {
+      result.version = stripQuotes(line.split("=")[1].trim());
+    } else if (line.startsWith("license") && line.includes("=")) {
+      result.license = stripQuotes(line.split("=")[1].trim());
+    } else if (line.startsWith("import")) {
+      inImport = true;
       // 单行：import { "x@1.0" }
-      const braceMatch = line.match(/\{([^}]*)\}/)
+      const braceMatch = line.match(/\{([^}]*)\}/);
       if (braceMatch) {
-        addImports(result.deps, braceMatch[1])
-        inImport = false
+        addImports(result.deps, braceMatch[1]);
+        inImport = false;
       }
     } else if (inImport && line.includes('"')) {
       // 多行 import 里的字符串
-      const m = line.match(/"([^"]+)"/)
+      const m = line.match(/"([^"]+)"/);
       if (m) {
-        const { name, version } = splitDepName(m[1])
-        result.deps[name] = version
+        const { name, version } = splitDepName(m[1]);
+        result.deps[name] = version;
       }
-      if (line.includes('}')) inImport = false
+      if (line.includes("}")) inImport = false;
     }
   }
-  return result
+  return result;
 }
 
 function addImports(deps: Record<string, string>, str: string): void {
   // 形如 "pkg@1.0", "pkg2"
-  const re = /"([^"]+)"/g
-  let m: RegExpExecArray | null
+  const re = /"([^"]+)"/g;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(str)) !== null) {
-    const { name, version } = splitDepName(m[1])
-    deps[name] = version
+    const { name, version } = splitDepName(m[1]);
+    deps[name] = version;
   }
 }
 
 function splitDepName(s: string): { name: string; version: string } {
-  const at = s.lastIndexOf('@')
+  const at = s.lastIndexOf("@");
   if (at > 0) {
-    return { name: s.substring(0, at), version: s.substring(at + 1) }
+    return { name: s.substring(0, at), version: s.substring(at + 1) };
   }
-  return { name: s, version: 'latest' }
+  return { name: s, version: "latest" };
 }
 
 function normalizeDeps(deps: Record<string, string>): Record<string, string> {
   // JSON 里可能是 { "pkg": "1.0" } 或 { "pkg@1.0": "..." }
-  const result: Record<string, string> = {}
+  const result: Record<string, string> = {};
   for (const k of Object.keys(deps)) {
-    const { name, version } = splitDepName(k)
-    result[name] = deps[k] || version
+    const { name, version } = splitDepName(k);
+    result[name] = deps[k] || version;
   }
-  return result
+  return result;
 }
 
 function stripQuotes(s: string): string {
-  return s.replace(/^["']|["']$/g, '')
+  return s.replace(/^["']|["']$/g, "");
 }
 
 // ===== 图构建 =====
@@ -137,57 +137,57 @@ function buildGraph(
   modules: Record<string, string>,
   maxDepth = 10,
 ): DepGraph {
-  const nodes = new Map<string, GraphNode>() // id -> node
-  const edges: DepGraph['edges'] = []
-  const visited = new Set<string>()
+  const nodes = new Map<string, GraphNode>(); // id -> node
+  const edges: DepGraph["edges"] = [];
+  const visited = new Set<string>();
 
   function makeId(name: string, version: string): string {
-    return `${name}@${version}`
+    return `${name}@${version}`;
   }
 
   function addNode(name: string, version: string, depth: number): string {
-    const id = makeId(name, version)
+    const id = makeId(name, version);
     if (!nodes.has(id)) {
-      nodes.set(id, { id, name, version, depth })
+      nodes.set(id, { id, name, version, depth });
     }
-    return id
+    return id;
   }
 
   function addEdge(fromId: string, toId: string): void {
-    edges.push({ from: fromId, to: toId })
+    edges.push({ from: fromId, to: toId });
   }
 
   function resolveModule(name: string, version: string): ParsedMod | null {
     // 根节点
-    if (name === rootMod.name) return rootMod
-    const key = makeId(name, version)
-    const content = modules[key]
-    if (!content) return null
-    return parseMod(content)
+    if (name === rootMod.name) return rootMod;
+    const key = makeId(name, version);
+    const content = modules[key];
+    if (!content) return null;
+    return parseMod(content);
   }
 
-  const rootId = addNode(rootMod.name, rootMod.version, 0)
-  visited.add(rootId)
+  const rootId = addNode(rootMod.name, rootMod.version, 0);
+  visited.add(rootId);
 
   // BFS
-  const queue = [{ name: rootMod.name, version: rootMod.version, depth: 0 }]
+  const queue = [{ name: rootMod.name, version: rootMod.version, depth: 0 }];
   while (queue.length > 0) {
-    const cur = queue.shift()!
-    if (cur.depth >= maxDepth) continue
-    const curId = makeId(cur.name, cur.version)
-    const mod = resolveModule(cur.name, cur.version)
-    if (!mod) continue
+    const cur = queue.shift()!;
+    if (cur.depth >= maxDepth) continue;
+    const curId = makeId(cur.name, cur.version);
+    const mod = resolveModule(cur.name, cur.version);
+    if (!mod) continue;
 
     for (const [depName, depVersion] of Object.entries(mod.deps)) {
-      const depId = addNode(depName, depVersion, cur.depth + 1)
-      addEdge(curId, depId)
+      const depId = addNode(depName, depVersion, cur.depth + 1);
+      addEdge(curId, depId);
       if (!visited.has(depId)) {
-        visited.add(depId)
+        visited.add(depId);
         queue.push({
           name: depName,
           version: depVersion,
           depth: cur.depth + 1,
-        })
+        });
       }
     }
   }
@@ -196,7 +196,7 @@ function buildGraph(
     root_id: rootId,
     nodes: Array.from(nodes.values()),
     edges,
-  }
+  };
 }
 
 // ===== 健康评分 =====
@@ -208,85 +208,85 @@ const WEIGHTS = {
   deprecated: 0.25,
   size: 0.2,
   activity: 0.1,
-} as const
+} as const;
 
 interface VersionParts {
-  major: number
-  minor: number
-  patch: number
+  major: number;
+  minor: number;
+  patch: number;
 }
 
 function parseVersion(v: string): VersionParts | null {
-  const m = v.match(/^(\d+)\.(\d+)\.(\d+)/)
-  if (!m) return null
+  const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
   return {
     major: parseInt(m[1]),
     minor: parseInt(m[2]),
     patch: parseInt(m[3]),
-  }
+  };
 }
 
 function scoreFreshness(mod: ParsedMod, meta: NodeMetaInput): number {
   // 看 latest_version：如果与当前版本差异大 → 低分
-  if (!meta.latest_version) return 50 // 未知给中间分
-  if (mod.version === meta.latest_version) return 100
-  const cur = parseVersion(mod.version)
-  const latest = parseVersion(meta.latest_version)
-  if (!cur || !latest) return 70
-  if (cur.major < latest.major) return 20 // 跨大版本，严重过时
+  if (!meta.latest_version) return 50; // 未知给中间分
+  if (mod.version === meta.latest_version) return 100;
+  const cur = parseVersion(mod.version);
+  const latest = parseVersion(meta.latest_version);
+  if (!cur || !latest) return 70;
+  if (cur.major < latest.major) return 20; // 跨大版本，严重过时
   if (cur.minor < latest.minor) {
-    const gap = latest.minor - cur.minor
-    return Math.max(30, 80 - gap * 15)
+    const gap = latest.minor - cur.minor;
+    return Math.max(30, 80 - gap * 15);
   }
-  return 90
+  return 90;
 }
 
 function scoreCompliance(mod: ParsedMod, meta: NodeMetaInput): number {
-  const license = meta.license || mod.license
-  if (!license) return 40 // 无许可证有风险
+  const license = meta.license || mod.license;
+  if (!license) return 40; // 无许可证有风险
   const ok = [
-    'MIT',
-    'Apache-2.0',
-    'BSD-2-Clause',
-    'BSD-3-Clause',
-    'ISC',
-    'Unlicense',
-    'Zlib',
-  ]
-  const upper = license.toUpperCase()
-  if (ok.some((l) => upper.includes(l.toUpperCase()))) return 100
-  if (upper.includes('GPL') || upper.includes('AGPL') || upper.includes('LGPL'))
-    return 30 // copyleft
-  if (upper.includes('MPL')) return 60
-  return 50
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "Zlib",
+  ];
+  const upper = license.toUpperCase();
+  if (ok.some((l) => upper.includes(l.toUpperCase()))) return 100;
+  if (upper.includes("GPL") || upper.includes("AGPL") || upper.includes("LGPL"))
+    return 30; // copyleft
+  if (upper.includes("MPL")) return 60;
+  return 50;
 }
 
 function scoreDeprecated(meta: NodeMetaInput): number {
-  const total = meta.total_api_count || 0
-  const depCount = (meta.deprecated_apis || []).length
-  if (total === 0) return 100
-  const ratio = depCount / total
-  return Math.max(0, Math.round(100 - ratio * 500)) // 20% 废弃 → 0 分
+  const total = meta.total_api_count || 0;
+  const depCount = (meta.deprecated_apis || []).length;
+  if (total === 0) return 100;
+  const ratio = depCount / total;
+  return Math.max(0, Math.round(100 - ratio * 500)); // 20% 废弃 → 0 分
 }
 
 function scoreSize(meta: NodeMetaInput): number {
-  const size = meta.self_size || 0
-  if (size === 0) return 80
-  if (size < 100_000) return 100
-  if (size < 500_000) return 80
-  if (size < 1_000_000) return 60
-  if (size < 5_000_000) return 40
-  return 20
+  const size = meta.self_size || 0;
+  if (size === 0) return 80;
+  if (size < 100_000) return 100;
+  if (size < 500_000) return 80;
+  if (size < 1_000_000) return 60;
+  if (size < 5_000_000) return 40;
+  return 20;
 }
 
 function scoreActivity(meta: NodeMetaInput): number {
-  const days = meta.last_commit_days_ago
-  if (days == null) return 50
-  if (days < 30) return 100
-  if (days < 90) return 90
-  if (days < 180) return 70
-  if (days < 365) return 40
-  return 10
+  const days = meta.last_commit_days_ago;
+  if (days == null) return 50;
+  if (days < 30) return 100;
+  if (days < 90) return 90;
+  if (days < 180) return 70;
+  if (days < 365) return 40;
+  return 10;
 }
 
 function computeHealthScore(
@@ -294,11 +294,11 @@ function computeHealthScore(
   mod: ParsedMod,
   meta: NodeMetaInput,
 ): HealthScore {
-  const freshness = scoreFreshness(mod, meta)
-  const compliance = scoreCompliance(mod, meta)
-  const deprecated = scoreDeprecated(meta)
-  const size = scoreSize(meta)
-  const activity = scoreActivity(meta)
+  const freshness = scoreFreshness(mod, meta);
+  const compliance = scoreCompliance(mod, meta);
+  const deprecated = scoreDeprecated(meta);
+  const size = scoreSize(meta);
+  const activity = scoreActivity(meta);
 
   const total = Math.round(
     freshness * WEIGHTS.freshness +
@@ -306,7 +306,7 @@ function computeHealthScore(
       deprecated * WEIGHTS.deprecated +
       size * WEIGHTS.size +
       activity * WEIGHTS.activity,
-  )
+  );
 
   return {
     node_id: node.id,
@@ -316,7 +316,7 @@ function computeHealthScore(
     deprecated_density: deprecated,
     size_reasonableness: size,
     activity,
-  }
+  };
 }
 
 // ===== 诊断 =====
@@ -327,114 +327,117 @@ function makeDiagnostic(
   nodeId: string,
   msg: string,
 ): Diagnostic {
-  return { code, severity, node_id: nodeId, message: msg }
+  return { code, severity, node_id: nodeId, message: msg };
 }
 
 /** 内部元数据结构：附带 _mod 供诊断使用 */
-type MetaWithMod = NodeMetaInput & { _mod?: ParsedMod }
+type MetaWithMod = NodeMetaInput & { _mod?: ParsedMod };
 
-function diagnose(graph: DepGraph, metas: Record<string, MetaWithMod>): Diagnostic[] {
-  const diags: Diagnostic[] = []
+function diagnose(
+  graph: DepGraph,
+  metas: Record<string, MetaWithMod>,
+): Diagnostic[] {
+  const diags: Diagnostic[] = [];
 
   for (const node of graph.nodes) {
-    const meta = metas[node.id] || {}
+    const meta = metas[node.id] || {};
     const mod = meta._mod || {
       name: node.name,
       version: node.version,
       deps: {},
       license: null,
-    }
+    };
 
     // OUTDATED-001
     if (meta.latest_version && mod.version !== meta.latest_version) {
       diags.push(
         makeDiagnostic(
-          'OUTDATED-001',
-          'warning',
+          "OUTDATED-001",
+          "warning",
           node.id,
-          `${node.name} 当前 v${mod.version}，最新 ${meta.latest_version}，建议升级`,
+          `${node.name} is on v${mod.version}, latest is ${meta.latest_version}; consider upgrading`,
         ),
-      )
+      );
     }
 
     // LICENSE-001 / LICENSE-002
-    const license = meta.license || mod.license
+    const license = meta.license || mod.license;
     if (!license) {
       diags.push(
         makeDiagnostic(
-          'LICENSE-001',
-          'info',
+          "LICENSE-001",
+          "info",
           node.id,
-          `${node.name} 未声明许可证，商业使用存在风险`,
+          `${node.name} does not declare a license; commercial use carries legal risk`,
         ),
-      )
+      );
     } else if (/GPL|AGPL|LGPL/i.test(license)) {
       diags.push(
         makeDiagnostic(
-          'LICENSE-002',
-          'warning',
+          "LICENSE-002",
+          "warning",
           node.id,
-          `${node.name} 使用 ${license}，需注意 copyleft 传染性`,
+          `${node.name} uses ${license}; beware of copyleft obligations`,
         ),
-      )
+      );
     }
 
     // DEPRECATED-001
-    const depApiCount = (meta.deprecated_apis || []).length
+    const depApiCount = (meta.deprecated_apis || []).length;
     if (depApiCount > 0) {
       diags.push(
         makeDiagnostic(
-          'DEPRECATED-001',
-          'info',
+          "DEPRECATED-001",
+          "info",
           node.id,
-          `${node.name} 含 ${depApiCount} 个废弃 API`,
+          `${node.name} contains ${depApiCount} deprecated API(s)`,
         ),
-      )
+      );
     }
 
     // SIZE-001
-    const size = meta.self_size || 0
+    const size = meta.self_size || 0;
     if (size > 1_000_000) {
       diags.push(
         makeDiagnostic(
-          'SIZE-001',
-          'warning',
+          "SIZE-001",
+          "warning",
           node.id,
-          `${node.name} 体积 ${fmtBytes(size)}，考虑精简`,
+          `${node.name} weighs ${fmtBytes(size)}; consider slimming it down`,
         ),
-      )
+      );
     }
 
     // ACTIVITY-001 / ACTIVITY-002
-    const days = meta.last_commit_days_ago
+    const days = meta.last_commit_days_ago;
     if (days != null && days > 365) {
       diags.push(
         makeDiagnostic(
-          'ACTIVITY-001',
-          'critical',
+          "ACTIVITY-001",
+          "critical",
           node.id,
-          `${node.name} 已 ${days} 天未更新，可能已停止维护`,
+          `${node.name} has not been updated for ${days} days and may be unmaintained`,
         ),
-      )
+      );
     } else if (days != null && days > 180) {
       diags.push(
         makeDiagnostic(
-          'ACTIVITY-002',
-          'info',
+          "ACTIVITY-002",
+          "info",
           node.id,
-          `${node.name} 最近更新在 ${days} 天前`,
+          `${node.name} was last updated ${days} days ago`,
         ),
-      )
+      );
     }
   }
 
-  return diags
+  return diags;
 }
 
 export function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 // ===== 体积传递计算 =====
@@ -444,28 +447,28 @@ function computeTransitiveSize(
   metas: Record<string, MetaWithMod>,
 ): SizeOffender[] {
   // 反向邻接：child -> parents
-  const childrenMap = new Map<string, string[]>()
+  const childrenMap = new Map<string, string[]>();
   for (const e of graph.edges) {
-    if (!childrenMap.has(e.from)) childrenMap.set(e.from, [])
-    childrenMap.get(e.from)!.push(e.to)
+    if (!childrenMap.has(e.from)) childrenMap.set(e.from, []);
+    childrenMap.get(e.from)!.push(e.to);
   }
 
-  const memo = new Map<string, number>()
+  const memo = new Map<string, number>();
   function transitiveSize(id: string): number {
-    if (memo.has(id)) return memo.get(id)!
-    const selfSize = (metas[id] || {}).self_size || 0
-    let total = selfSize
-    const visited = new Set([id])
-    const queue = [...(childrenMap.get(id) || [])]
+    if (memo.has(id)) return memo.get(id)!;
+    const selfSize = (metas[id] || {}).self_size || 0;
+    let total = selfSize;
+    const visited = new Set([id]);
+    const queue = [...(childrenMap.get(id) || [])];
     while (queue.length > 0) {
-      const cur = queue.shift()!
-      if (visited.has(cur)) continue
-      visited.add(cur)
-      total += (metas[cur] || {}).self_size || 0
-      queue.push(...(childrenMap.get(cur) || []))
+      const cur = queue.shift()!;
+      if (visited.has(cur)) continue;
+      visited.add(cur);
+      total += (metas[cur] || {}).self_size || 0;
+      queue.push(...(childrenMap.get(cur) || []));
     }
-    memo.set(id, total)
-    return total
+    memo.set(id, total);
+    return total;
   }
 
   return graph.nodes
@@ -474,7 +477,7 @@ function computeTransitiveSize(
       self_size: (metas[n.id] || {}).self_size || 0,
       transitive_size: transitiveSize(n.id),
     }))
-    .sort((a, b) => b.transitive_size - a.transitive_size)
+    .sort((a, b) => b.transitive_size - a.transitive_size);
 }
 
 // ===== 生态统计 =====
@@ -485,16 +488,16 @@ function computeEcosystemStats(
   metas: Record<string, MetaWithMod>,
   rootId: string,
 ): EcosystemStats {
-  const directDeps = graph.edges.filter((e) => e.from === rootId).length
-  const uniqueLicenses = new Set<string>()
-  let totalSize = 0
-  let totalDeprecated = 0
+  const directDeps = graph.edges.filter((e) => e.from === rootId).length;
+  const uniqueLicenses = new Set<string>();
+  let totalSize = 0;
+  let totalDeprecated = 0;
 
   for (const node of graph.nodes) {
-    const meta = metas[node.id] || {}
-    if (meta.license) uniqueLicenses.add(meta.license)
-    totalSize += meta.self_size || 0
-    totalDeprecated += (meta.deprecated_apis || []).length
+    const meta = metas[node.id] || {};
+    if (meta.license) uniqueLicenses.add(meta.license);
+    totalSize += meta.self_size || 0;
+    totalDeprecated += (meta.deprecated_apis || []).length;
   }
 
   const avgHealth =
@@ -502,7 +505,7 @@ function computeEcosystemStats(
       ? Math.round(
           healthScores.reduce((a, b) => a + b.total, 0) / healthScores.length,
         )
-      : 0
+      : 0;
 
   return {
     total_packages: graph.nodes.length,
@@ -512,33 +515,35 @@ function computeEcosystemStats(
     total_deprecated_apis: totalDeprecated,
     unique_licenses: uniqueLicenses.size,
     avg_health_score: avgHealth,
-  }
+  };
 }
 
 // ===== 主入口 =====
 
 export function runJsAnalyzer(request: AnalyzerRequest): AnalysisResult {
   try {
-    if (request.type === 'mod_text') {
-      return analyzeSingleMod(request.mod_text)
-    } else if (request.type === 'context') {
-      return analyzeContext(request.context)
+    if (request.type === "mod_text") {
+      return analyzeSingleMod(request.mod_text);
+    } else if (request.type === "context") {
+      return analyzeContext(request.context);
     }
-    return { error: `unknown request type: ${(request as { type: string }).type}` } as AnalysisResult
+    return {
+      error: `unknown request type: ${(request as { type: string }).type}`,
+    } as AnalysisResult;
   } catch (e) {
     return {
       error: `analyzer exception: ${e instanceof Error ? e.message : String(e)}`,
-    } as AnalysisResult
+    } as AnalysisResult;
   }
 }
 
 function analyzeSingleMod(modText: string): AnalysisResult {
-  const rootMod = parseMod(modText)
+  const rootMod = parseMod(modText);
   if (rootMod.parse_error) {
-    return { error: `parse failed: ${rootMod.parse_error}` } as AnalysisResult
+    return { error: `parse failed: ${rootMod.parse_error}` } as AnalysisResult;
   }
-  const graph = buildGraph(rootMod, {}, 1)
-  const metas: Record<string, MetaWithMod> = {}
+  const graph = buildGraph(rootMod, {}, 1);
+  const metas: Record<string, MetaWithMod> = {};
   // 根节点 meta
   metas[graph.root_id] = {
     license: rootMod.license,
@@ -546,62 +551,89 @@ function analyzeSingleMod(modText: string): AnalysisResult {
     total_api_count: 0,
     self_size: 0,
     _mod: rootMod,
-  }
+  };
   // 其他节点无 meta
   for (const n of graph.nodes) {
-    if (n.id !== graph.root_id && !metas[n.id]) metas[n.id] = {}
+    if (n.id !== graph.root_id && !metas[n.id]) metas[n.id] = {};
   }
 
   const healthScores = graph.nodes.map((n) =>
     computeHealthScore(n, metas[n.id]._mod || ({} as ParsedMod), metas[n.id]),
-  )
-  const diags = diagnose(graph, metas)
-  const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5)
-  const stats = computeEcosystemStats(graph, healthScores, metas, graph.root_id)
+  );
+  const diags = diagnose(graph, metas);
+  const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5);
+  const stats = computeEcosystemStats(
+    graph,
+    healthScores,
+    metas,
+    graph.root_id,
+  );
 
-  return assembleResult(graph, rootMod, healthScores, diags, sizeOffenders, stats, metas)
+  return assembleResult(
+    graph,
+    rootMod,
+    healthScores,
+    diags,
+    sizeOffenders,
+    stats,
+    metas,
+  );
 }
 
 function analyzeContext(ctx: AnalysisContext): AnalysisResult {
-  if (!ctx.root) return { error: "missing required field 'root'" } as AnalysisResult
-  const rootMod = parseMod(ctx.root)
+  if (!ctx.root)
+    return { error: "missing required field 'root'" } as AnalysisResult;
+  const rootMod = parseMod(ctx.root);
   if (rootMod.parse_error) {
     return {
       error: `failed to parse root module: ${rootMod.parse_error}`,
-    } as AnalysisResult
+    } as AnalysisResult;
   }
 
-  const modules = ctx.modules || {}
-  const metadata = ctx.metadata || {}
-  const maxDepth = (ctx.options && ctx.options.max_depth) || 10
+  const modules = ctx.modules || {};
+  const metadata = ctx.metadata || {};
+  const maxDepth = (ctx.options && ctx.options.max_depth) || 10;
 
-  const graph = buildGraph(rootMod, modules, maxDepth)
+  const graph = buildGraph(rootMod, modules, maxDepth);
 
   // 构建 metas
-  const metas: Record<string, MetaWithMod> = {}
+  const metas: Record<string, MetaWithMod> = {};
   for (const n of graph.nodes) {
-    const meta = metadata[n.id] || {}
+    const meta = metadata[n.id] || {};
     // 给每个节点附加 _mod 用于诊断
-    let mod: ParsedMod
+    let mod: ParsedMod;
     if (n.id === graph.root_id) {
-      mod = rootMod
+      mod = rootMod;
     } else {
-      const content = modules[n.id]
+      const content = modules[n.id];
       mod = content
         ? parseMod(content)
-        : { name: n.name, version: n.version, deps: {}, license: null }
+        : { name: n.name, version: n.version, deps: {}, license: null };
     }
-    metas[n.id] = { ...meta, _mod: mod }
+    metas[n.id] = { ...meta, _mod: mod };
   }
 
   const healthScores = graph.nodes.map((n) =>
     computeHealthScore(n, metas[n.id]._mod || ({} as ParsedMod), metas[n.id]),
-  )
-  const diags = diagnose(graph, metas)
-  const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5)
-  const stats = computeEcosystemStats(graph, healthScores, metas, graph.root_id)
+  );
+  const diags = diagnose(graph, metas);
+  const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5);
+  const stats = computeEcosystemStats(
+    graph,
+    healthScores,
+    metas,
+    graph.root_id,
+  );
 
-  return assembleResult(graph, rootMod, healthScores, diags, sizeOffenders, stats, metas)
+  return assembleResult(
+    graph,
+    rootMod,
+    healthScores,
+    diags,
+    sizeOffenders,
+    stats,
+    metas,
+  );
 }
 
 function assembleResult(
@@ -613,19 +645,19 @@ function assembleResult(
   stats: EcosystemStats,
   metas: Record<string, MetaWithMod>,
 ): AnalysisResult {
-  const crit = diags.filter((d) => d.severity === 'critical').length
-  const warn = diags.filter((d) => d.severity === 'warning').length
-  const info = diags.filter((d) => d.severity === 'info').length
+  const crit = diags.filter((d) => d.severity === "critical").length;
+  const warn = diags.filter((d) => d.severity === "warning").length;
+  const info = diags.filter((d) => d.severity === "info").length;
 
   const overallScore =
     healthScores.length > 0
       ? Math.round(
           healthScores.reduce((a, b) => a + b.total, 0) / healthScores.length,
         )
-      : 0
+      : 0;
 
   // 序列化 metas（去掉 _mod）
-  const cleanMetas: Record<string, NodeMetaOutput> = {}
+  const cleanMetas: Record<string, NodeMetaOutput> = {};
   for (const [id, meta] of Object.entries(metas)) {
     cleanMetas[id] = {
       license: meta.license || null,
@@ -635,7 +667,7 @@ function assembleResult(
         meta.last_commit_days_ago != null ? meta.last_commit_days_ago : null,
       total_api_count: meta.total_api_count || 0,
       deprecated_api_count: (meta.deprecated_apis || []).length,
-    }
+    };
   }
 
   return {
@@ -653,5 +685,5 @@ function assembleResult(
     node_metas: cleanMetas,
     ecosystem_stats: stats,
     _root_mod: rootMod, // 供前端使用，不属于 WASM 契约
-  }
+  };
 }

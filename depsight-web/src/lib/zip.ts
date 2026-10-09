@@ -28,7 +28,7 @@ export async function extractZipEntryText(
       break;
     }
   }
-  if (eocd < 0) throw new Error("非法 zip：未找到 EOCD");
+  if (eocd < 0) throw new Error("Invalid zip: EOCD not found");
 
   const count = view.getUint16(eocd + 10, true);
   let p = view.getUint32(eocd + 16, true); // central directory 起始偏移
@@ -36,7 +36,7 @@ export async function extractZipEntryText(
 
   for (let i = 0; i < count; i++) {
     if (view.getUint32(p, true) !== CDFH_SIG)
-      throw new Error("非法 zip：CDFH 签名错误");
+      throw new Error("Invalid zip: bad CDFH signature");
     const method = view.getUint16(p + 10, true);
     const compSize = view.getUint32(p + 20, true);
     const nameLen = view.getUint16(p + 28, true);
@@ -79,7 +79,7 @@ async function inflateEntry(
   decoder: TextDecoder,
 ): Promise<string> {
   if (view.getUint32(localOff, true) !== LFH_SIG)
-    throw new Error("非法 zip：LFH 签名错误");
+    throw new Error("Invalid zip: bad LFH signature");
   const lNameLen = view.getUint16(localOff + 26, true);
   const lExtraLen = view.getUint16(localOff + 28, true);
   const dataStart = localOff + 30 + lNameLen + lExtraLen;
@@ -92,5 +92,5 @@ async function inflateEntry(
     const stream = new Blob([compData]).stream().pipeThrough(ds);
     return await new Response(stream).text();
   }
-  throw new Error(`不支持的 zip 压缩方式: ${method}`);
+  throw new Error(`Unsupported zip compression method: ${method}`);
 }
