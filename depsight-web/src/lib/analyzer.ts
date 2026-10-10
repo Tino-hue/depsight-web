@@ -72,6 +72,9 @@ function parseModToml(text: string): ParsedMod {
 
     if (line.startsWith("name") && line.includes("=")) {
       result.name = stripQuotes(line.split("=")[1].trim());
+    } else if (line.startsWith("module") && !line.includes("=")) {
+      // 头部行：`module my/app`（等价于 name = "my/app"）
+      result.name = line.substring("module".length).trim();
     } else if (line.startsWith("version") && line.includes("=")) {
       result.version = stripQuotes(line.split("=")[1].trim());
     } else if (line.startsWith("license") && line.includes("=")) {

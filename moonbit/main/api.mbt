@@ -239,6 +239,9 @@ fn parse_mod_toml(text : String) -> Result[Module, String] {
 
     if line.has_prefix("name") && line.contains("=") {
       result.name = strip_quotes(toml_value(line))
+    } else if line.has_prefix("module") && !line.contains("=") {
+      // 头部行：`module my/app`（等价于 name = "my/app"）
+      result.name = line["module".length():].trim().to_owned()
     } else if line.has_prefix("version") && line.contains("=") {
       result.version = strip_quotes(toml_value(line))
     } else if line.has_prefix("license") && line.contains("=") {
