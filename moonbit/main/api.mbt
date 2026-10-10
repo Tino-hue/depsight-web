@@ -730,7 +730,7 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
             code: "OUTDATED-001",
             severity: "warning",
             node_id: node.id,
-            message: node.name + " 当前 v" + node.version + "，最新 " + latest + "，建议升级",
+            message: node.name + " is at v" + node.version + " (latest " + latest + "); consider upgrading",
           })
         }
       }
@@ -744,7 +744,7 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
           code: "LICENSE-001",
           severity: "info",
           node_id: node.id,
-          message: node.name + " 未声明许可证，商业使用存在风险",
+          message: node.name + " declares no license; commercial use carries risk",
         })
       }
       Some(lic) => {
@@ -754,7 +754,7 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
             code: "LICENSE-002",
             severity: "warning",
             node_id: node.id,
-            message: node.name + " 使用 " + lic + "，需注意 copyleft 传染性",
+            message: node.name + " uses " + lic + "; beware of copyleft obligations",
           })
         }
       }
@@ -767,7 +767,7 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
         code: "DEPRECATED-001",
         severity: "info",
         node_id: node.id,
-        message: node.name + " 含 " + dep_count.to_string() + " 个废弃 API",
+        message: node.name + " contains " + dep_count.to_string() + " deprecated APIs",
       })
     }
 
@@ -777,7 +777,7 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
         code: "SIZE-001",
         severity: "warning",
         node_id: node.id,
-        message: node.name + " 体积 " + fmt_bytes(meta.self_size) + "，考虑精简",
+        message: node.name + " is " + fmt_bytes(meta.self_size) + "; consider slimming it down",
       })
     }
 
@@ -789,14 +789,14 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
             code: "ACTIVITY-001",
             severity: "critical",
             node_id: node.id,
-            message: node.name + " 已 " + days.to_string() + " 天未更新，可能已停止维护",
+            message: node.name + " has not been updated in " + days.to_string() + " days and may be unmaintained",
           })
         } else if days > 180 {
           diags.push(Diagnostic::{
             code: "ACTIVITY-002",
             severity: "info",
             node_id: node.id,
-            message: node.name + " 最近更新在 " + days.to_string() + " 天前",
+            message: node.name + " was last updated " + days.to_string() + " days ago",
           })
         }
       }
