@@ -1,0 +1,40 @@
+/* TiltCard — transform + glare driven by CSS variables written from the
+   spring engine in tilt-card.tsx. */
+.tilt-card {
+  --tc-rx: 0deg;
+  --tc-ry: 0deg;
+  --tc-lift: 0px;
+  --tc-light-x: 50%;
+  --tc-light-y: 50%;
+  --tc-glare-o: 0;
+  position: relative;
+  transform: perspective(900px) rotateX(var(--tc-rx)) rotateY(var(--tc-ry))
+    translateY(var(--tc-lift));
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+/* Pointer-tracking specular highlight, blended over the card content. */
+.tilt-card__glare {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    320px circle at var(--tc-light-x) var(--tc-light-y),
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.18) 35%,
+    transparent 65%
+  );
+  mix-blend-mode: overlay;
+  opacity: var(--tc-glare-o);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tilt-card {
+    transform: none;
+  }
+  .tilt-card__glare {
+    display: none;
+  }
+}

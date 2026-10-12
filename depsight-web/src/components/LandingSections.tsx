@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 import { Feature3D } from "@/components/Feature3D";
-import { Card } from "@/components/ui/card";
+import TiltCard from "@/components/ui/tilt-card";
 import { useApp } from "@/state/AppContext";
 import { cn } from "@/lib/utils";
 
@@ -173,13 +173,13 @@ function FeaturesSection() {
         <div className="landing-grid">
           {FEATURES.map((f, i) => (
             <Reveal key={f.title} delay={0.08 * i}>
-              <Card className="landing-card h-full">
+              <TiltCard className="landing-card h-full">
                 <span className="landing-card-icon">
                   <f.icon size={22} strokeWidth={1.7} aria-hidden />
                 </span>
                 <h3>{f.title}</h3>
                 <p>{f.desc}</p>
-              </Card>
+              </TiltCard>
             </Reveal>
           ))}
         </div>
@@ -279,13 +279,13 @@ function TechStackSection() {
         <div className="landing-tech">
           {TECHS.map((t, i) => (
             <Reveal key={t.name} delay={0.08 * i}>
-              <Card className="landing-tech-card h-full">
+              <TiltCard className="landing-tech-card h-full">
                 <span className="landing-tech-logo">
                   <t.icon size={24} strokeWidth={1.6} aria-hidden />
                 </span>
                 <h3>{t.name}</h3>
                 <p>{t.desc}</p>
-              </Card>
+              </TiltCard>
             </Reveal>
           ))}
         </div>
