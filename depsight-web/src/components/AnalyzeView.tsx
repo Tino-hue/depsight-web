@@ -1,7 +1,7 @@
 // 分析视图：工作台布局 + 四种输入方式（粘贴 / 文件 / 包名 / 示例）+ 结果面板
 // 视觉：暗色玻璃质感卡片 + 绿色辉光 + 空状态 3D 引导
 import { useRef, useState } from "react";
-import { FileUp, Package, Play, Sparkles, UploadCloud } from "lucide-react";
+import { FileUp, Play, Sparkles, UploadCloud } from "lucide-react";
 
 import { DashboardCard } from "@/components/Dashboard";
 import { HistoryPanel } from "@/components/HistoryPanel";
@@ -12,17 +12,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useFetcher } from "@/hooks/useFetcher";
-import { loadDemoContext } from "@/lib/demo-data";
 import { useApp } from "@/state/AppContext";
 import { cn } from "@/lib/utils";
 
-type InputTab = "text" | "file" | "package" | "demo";
+type InputTab = "text" | "file" | "package";
 
 const INPUT_TABS: { value: InputTab; label: string }[] = [
   { value: "text", label: "Paste" },
   { value: "file", label: "Upload" },
   { value: "package", label: "Package" },
-  { value: "demo", label: "Demo" },
 ];
 
 export function AnalyzeView() {
@@ -95,12 +93,6 @@ export function AnalyzeView() {
         // 把拉到的 root mod 回填到文本框，便于用户编辑
         if (ctx.root) setModText(ctx.root);
         setStatus("Analyzing…");
-        const result = analyzeFromContext(ctx);
-        finish(result, "");
-      } else {
-        setStatus("Loading demo data…");
-        const ctx = await loadDemoContext();
-        if (ctx.root) setModText(ctx.root);
         const result = analyzeFromContext(ctx);
         finish(result, "");
       }
@@ -220,16 +212,6 @@ export function AnalyzeView() {
                   </p>
                 )}
               </>
-            )}
-
-            {tab === "demo" && (
-              <div className="workbench-demo-box">
-                <Package className="h-6 w-6 shrink-0" />
-                <p>
-                  Runs the full analysis flow offline with a built-in sample
-                  project (12 mock packages) — no network required.
-                </p>
-              </div>
             )}
           </div>
 

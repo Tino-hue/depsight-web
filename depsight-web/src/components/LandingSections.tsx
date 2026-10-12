@@ -188,6 +188,53 @@ function FeaturesSection() {
   );
 }
 
+function DemoVideoSection() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          v.play().catch(() => {});
+        } else {
+          v.pause();
+        }
+      },
+      { threshold: 0.5 },
+    );
+    io.observe(v);
+    return () => io.disconnect();
+  }, []);
+
+  return (
+    <section className="landing-section" id="demo" aria-label="Product tour">
+      <div className="landing-wrap">
+        <SectionHeading
+          eyebrow="Product tour"
+          title="See depsight in action"
+          sub="A short walkthrough of the workbench — paste a moon.mod, watch the WASM engine score the dependency graph, and explore the 3D view."
+        />
+        <Reveal delay={0.1}>
+          <div className="landing-video-frame">
+            <video
+              ref={videoRef}
+              className="landing-video"
+              src="/demo.mp4"
+              muted
+              loop
+              playsInline
+              preload="none"
+              aria-label="depsight product walkthrough"
+            />
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
 function HowItWorksSection() {
   return (
     <section
@@ -282,6 +329,7 @@ export function LandingSections() {
   return (
     <div className="landing">
       <FeaturesSection />
+      <DemoVideoSection />
       <HowItWorksSection />
       <TechStackSection />
       <LandingFooter />

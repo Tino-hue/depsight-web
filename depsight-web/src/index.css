@@ -950,6 +950,26 @@
     color: var(--muted-fg);
   }
 
+  .landing-video-frame {
+    margin: 40px 0 0;
+    padding: 12px;
+    border-radius: 16px;
+    background: linear-gradient(
+      180deg,
+      hsl(var(--primary) / 0.08),
+      transparent 70%
+    );
+    border: 1px solid hsl(var(--primary) / 0.18);
+    box-shadow: 0 20px 60px -30px hsl(var(--primary) / 0.35);
+  }
+  .landing-video {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 10px;
+    background: #000;
+  }
+
   /* ---------- Features（左文右 3D） ---------- */
   .landing-features-layout {
     display: grid;
