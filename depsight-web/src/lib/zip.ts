@@ -39,6 +39,7 @@ export async function extractZipEntryText(
       throw new Error("Invalid zip: bad CDFH signature");
     const method = view.getUint16(p + 10, true);
     const compSize = view.getUint32(p + 20, true);
+    const uncompSize = view.getUint32(p + 24, true);
     const nameLen = view.getUint16(p + 28, true);
     const extraLen = view.getUint16(p + 30, true);
     const commentLen = view.getUint16(p + 32, true);
@@ -51,14 +52,21 @@ export async function extractZipEntryText(
       fallback = { method, compSize, localOff };
     if (isTarget && !fileName.includes("/")) {
       // 根目录精确匹配，直接使用
-      return await inflateEntry(buf, view, method, compSize, localOff, decoder);
+      return await inflateEntryRaw(
+        buf,
+        view,
+        method,
+        compSize,
+        localOff,
+        decoder,
+      );
     }
 
     p += 46 + nameLen + extraLen + commentLen;
   }
 
   if (fallback) {
-    return await inflateEntry(
+    return await inflateEntryRaw(
       buf,
       view,
       fallback.method,
@@ -70,7 +78,53 @@ export async function extractZipEntryText(
   return null;
 }
 
-async function inflateEntry(
+/**
+ * 遍历 zip central directory，对匹配 predicate 的条目执行回调。
+ * 返回所有条目的 { name, compSize, method, localOff } 列表。
+ */
+export interface ZipEntryInfo {
+  name: string;
+  compSize: number;
+  uncompSize: number;
+  method: number;
+  localOff: number;
+}
+
+export function listZipEntries(buf: Uint8Array<ArrayBuffer>): ZipEntryInfo[] {
+  const decoder = new TextDecoder();
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0; i--) {
+    if (view.getUint32(i, true) === EOCD_SIG) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("Invalid zip: EOCD not found");
+
+  const count = view.getUint16(eocd + 10, true);
+  let p = view.getUint32(eocd + 16, true);
+  const out: ZipEntryInfo[] = [];
+  for (let i = 0; i < count; i++) {
+    if (view.getUint32(p, true) !== CDFH_SIG)
+      throw new Error("Invalid zip: bad CDFH signature");
+    const method = view.getUint16(p + 10, true);
+    const compSize = view.getUint32(p + 20, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const localOff = view.getUint32(p + 42, true);
+    const name = decoder.decode(buf.subarray(p + 46, p + 46 + nameLen));
+    if (!name.endsWith("/")) {
+      out.push({ name, compSize, uncompSize, method, localOff });
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
+export async function inflateEntryRaw(
   buf: Uint8Array<ArrayBuffer>,
   view: DataView,
   method: number,

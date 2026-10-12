@@ -19,7 +19,7 @@ import type {
   NodeMetaInput,
   ParsedMod,
 } from "./types";
-import { extractZipEntryText } from "./zip";
+import { extractZipEntryText, listZipEntries, inflateEntryRaw } from "./zip";
 
 const API_BASE = "https://mooncakes.io/api/v0";
 const ASSETS_SOURCE = "https://assets.mooncakes.io/source";
@@ -445,6 +445,135 @@ export async function fetchLicenseText(
   }
 }
 
+// ===== 源码体积与公开 API 统计（真实指标，zip 内 .mbt 源文件）=====
+// mooncakes v0 API 不直接提供 size/api_count，这里从发布 zip 的 central directory
+// 读取 .mbt 条目的 uncompressed size 累计为 self_size；逐文件解压后用
+// pub fn/let/struct/enum/trait/type/impl 行数估算公开 API 数量。
+// 结果按 name@version 缓存 localStorage 24h，在飞去重，失败不缓存。
+const SOURCE_STATS_PREFIX = "depsight_sstats_";
+const SOURCE_STATS_TTL = 24 * 60 * 60 * 1000;
+const SOURCE_STATS_MAX_ENTRIES = 200;
+
+interface SourceStats {
+  self_size: number;
+  total_api_count: number;
+}
+
+function readSourceStatsCache(
+  name: string,
+  version: string,
+): SourceStats | null | undefined {
+  const store = getStorage("local");
+  if (!store) return undefined;
+  try {
+    const raw = store.getItem(SOURCE_STATS_PREFIX + name + "@" + version);
+    if (!raw) return undefined;
+    const { fetchedAt, data } = JSON.parse(raw) as {
+      fetchedAt: number;
+      data: SourceStats;
+    };
+    if (Date.now() - fetchedAt > SOURCE_STATS_TTL) {
+      store.removeItem(SOURCE_STATS_PREFIX + name + "@" + version);
+      return undefined;
+    }
+    return data;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSourceStatsCache(
+  name: string,
+  version: string,
+  stats: SourceStats,
+): void {
+  const store = getStorage("local");
+  if (!store) return;
+  try {
+    const keys = Object.keys(store).filter((k) =>
+      k.startsWith(SOURCE_STATS_PREFIX),
+    );
+    if (keys.length >= SOURCE_STATS_MAX_ENTRIES) {
+      keys
+        .slice(0, keys.length - SOURCE_STATS_MAX_ENTRIES + 1)
+        .forEach((k) => store.removeItem(k));
+    }
+    store.setItem(
+      SOURCE_STATS_PREFIX + name + "@" + version,
+      JSON.stringify({ fetchedAt: Date.now(), data: stats }),
+    );
+  } catch {
+    /* 存储满或隐私模式：静默失败 */
+  }
+}
+
+const sourceStatsInFlight = new Map<string, Promise<SourceStats | null>>();
+
+/**
+ * 统计 name@version 发布 zip 内 .mbt 源文件。
+ * 任何失败返回 null，调用方退回默认行为（self_size=0 / total_api_count=0）。
+ */
+export async function fetchSourceStats(
+  name: string,
+  version: string,
+): Promise<SourceStats | null> {
+  const cached = readSourceStatsCache(name, version);
+  if (cached !== undefined) return cached;
+
+  const key = `${name}@${version}`;
+  const pending = sourceStatsInFlight.get(key);
+  if (pending) return pending;
+
+  const task = (async (): Promise<SourceStats | null> => {
+    try {
+      const resp = await fetchWithTimeout(
+        `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`,
+      );
+      if (!resp.ok) return null;
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      const decoder = new TextDecoder();
+      const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+      const entries = listZipEntries(buf);
+
+      let self_size = 0;
+      let total_api_count = 0;
+      // MoonBit 公开顶层声明：pub fn / pub let / pub struct / pub enum / pub trait / pub type / pub impl
+      const PUB_DECL = /^\s*pub\s+(?:fn|let|struct|enum|trait|type|impl)\b/gm;
+
+      for (const e of entries) {
+        const base = e.name.split("/").pop() ?? e.name;
+        if (!base.endsWith(".mbt")) continue;
+        // self_size 用 uncompressed size（CDFH offset 24 为 compSize，offset 20 为 uncompSize，
+        // listZipEntries 存的是 compSize；这里直接从 central dir 重新读 uncompSize）
+        self_size += e.uncompSize;
+        const text = await inflateEntryRaw(
+          buf,
+          view,
+          e.method,
+          e.compSize,
+          e.localOff,
+          decoder,
+        );
+        const matches = text.match(PUB_DECL);
+        if (matches) total_api_count += matches.length;
+      }
+
+      const stats: SourceStats = { self_size, total_api_count };
+      writeSourceStatsCache(name, version, stats);
+      return stats;
+    } catch {
+      return null;
+    }
+  })();
+
+  sourceStatsInFlight.set(key, task);
+  try {
+    return await task;
+  } finally {
+    sourceStatsInFlight.delete(key);
+  }
+}
+
 // ===== 递归收集依赖 =====
 // 返回 context：{ root, modules, metadata, options }
 //   root     根包模块描述文本（moon.mod.json 或 moon.mod TOML）
@@ -511,6 +640,14 @@ export async function fetchPackageContext(
     const licenseText = await fetchLicenseText(name, rootVersion);
     if (licenseText) metadata[rootId].license_text = licenseText;
   }
+  // 真实源码统计：zip 内 .mbt 字节数 + pub 声明行数（失败保留默认 0，不影响整体）
+  {
+    const s = await fetchSourceStats(name, rootVersion);
+    if (s) {
+      metadata[rootId].self_size = s.self_size;
+      metadata[rootId].total_api_count = s.total_api_count;
+    }
+  }
 
   const limit = createLimiter(DEP_CONCURRENCY);
   const queue = [{ name: rootMod.name, version: rootVersion, depth: 0 }];
@@ -559,6 +696,14 @@ export async function fetchPackageContext(
           if (!metadata[depId].license) {
             const licenseText = await fetchLicenseText(depName, depVer);
             if (licenseText) metadata[depId].license_text = licenseText;
+          }
+          // 真实源码统计（失败保留默认 0）
+          {
+            const s = await fetchSourceStats(depName, depVer);
+            if (s) {
+              metadata[depId].self_size = s.self_size;
+              metadata[depId].total_api_count = s.total_api_count;
+            }
           }
 
           queue.push({
