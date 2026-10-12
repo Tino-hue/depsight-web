@@ -3,11 +3,12 @@
 
 .PHONY: wasm serve clean
 
-# 编译 wasm-gc 产物并拷贝到 moonbit/depsight.wasm
+# 编译 wasm-gc 产物并拷贝到 moonbit/depsight.wasm 与 depsight-web/public/depsight.wasm
 wasm:
 	moon build --target wasm-gc --release
 	cp _build/wasm-gc/release/build/main/main.wasm moonbit/depsight.wasm
-	@echo "✓ WASM 产物已生成：moonbit/depsight.wasm"
+	cp _build/wasm-gc/release/build/main/main.wasm ../depsight-web/public/depsight.wasm
+	@echo "✓ WASM 产物已生成：moonbit/depsight.wasm 与 depsight-web/public/depsight.wasm"
 
 # 本地起服务（Windows 用 python，Mac/Linux 也可以用 python3）
 serve:
