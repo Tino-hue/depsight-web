@@ -1,0 +1,6 @@
+# Cloudflare Pages 部署配置
+# 用法：cd depsight-web && npx wrangler pages deploy dist --project-name=depsight-web
+
+name = "depsight-web"
+pages_build_output_dir = "depsight-web/dist"
+compatibility_date = "2025-01-01"

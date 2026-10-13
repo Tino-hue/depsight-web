@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.cloudflare.com/schemas/pages.routes.json",
+  "version": 1,
+  "include": ["/*"],
+  "exclude": ["/api/*"]
+}

@@ -1,3 +1,7 @@
 name = "depsight-api"
 compatibility_date = "2025-01-01"
 main = "index.ts"
+
+# 部署：cd worker && npx wrangler deploy
+# 前端 /api/* 请求指向 Worker 的 https://depsight-api.<subdomain>.workers.dev
+# 前端 fetcher.ts 生产模式已用相对路径 /api/download，同源部署时无需修改
