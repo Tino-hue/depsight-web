@@ -24,12 +24,21 @@ import { extractZipEntryText, listZipEntries, inflateEntryRaw } from "./zip";
 const API_BASE = "https://mooncakes.io/api/v0";
 const ASSETS_SOURCE = "https://assets.mooncakes.io/source";
 
-// 下载路径：Node 直连；浏览器 dev 走 Vite proxy，生产走 Cloudflare Worker
+// 下载路径：Node 直连；浏览器 dev 走 Vite proxy，生产走 Vercel API
 function resolveDownloadBase(): string {
   if (typeof window === "undefined")
     return "https://download.mooncakes.io/user";
   // dev server: vite proxy; production: same-origin /api
   return import.meta.env.DEV ? "/download-proxy/user" : "/api/download";
+}
+
+function downloadUrl(name: string, version: string): string {
+  const base = resolveDownloadBase();
+  // Vercel API 路径不带 .zip 后缀（避免被当静态文件）
+  if (base === "/api/download") {
+    return `${base}/${name}/${encodeURIComponent(version)}`;
+  }
+  return `${base}/${name}/${encodeURIComponent(version)}.zip`;
 }
 
 const REQUEST_TIMEOUT = 15000;
@@ -337,10 +346,7 @@ async function fetchModJsonFromZip(
   name: string,
   version: string,
 ): Promise<string> {
-  const resp = await fetchWithTimeout(
-    `${resolveDownloadBase()}/${name}/${encodeURIComponent(version)}.zip`,
-    60000,
-  );
+  const resp = await fetchWithTimeout(downloadUrl(name, version), 60000);
   if (!resp.ok) throw new Error(`zip HTTP ${resp.status}`);
   const buf = new Uint8Array(await resp.arrayBuffer());
   const json = await extractZipEntryText(buf, "moon.mod.json");
@@ -437,10 +443,7 @@ export async function fetchLicenseText(
 
   const task = (async () => {
     try {
-      const resp = await fetchWithTimeout(
-        `${resolveDownloadBase()}/${name}/${encodeURIComponent(version)}.zip`,
-        60000,
-      );
+      const resp = await fetchWithTimeout(downloadUrl(name, version), 60000);
       if (!resp.ok) return null;
       const buf = new Uint8Array(await resp.arrayBuffer());
       for (const base of LICENSE_BASENAMES) {
@@ -545,10 +548,7 @@ export async function fetchSourceStats(
 
   const task = (async (): Promise<SourceStats | null> => {
     try {
-      const resp = await fetchWithTimeout(
-        `${resolveDownloadBase()}/${name}/${encodeURIComponent(version)}.zip`,
-        60000,
-      );
+      const resp = await fetchWithTimeout(downloadUrl(name, version), 60000);
       if (!resp.ok) return null;
       const buf = new Uint8Array(await resp.arrayBuffer());
       const decoder = new TextDecoder();

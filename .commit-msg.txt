@@ -1,0 +1,14 @@
+chore(deploy): switch from Cloudflare to Vercel for global access
+
+Cloudflare is blocked/slow in China, making it impossible to deploy
+and difficult for domestic users to access. Vercel has better
+connectivity in both China and overseas.
+
+- Remove worker/ directory (Cloudflare Workers no longer needed)
+- Add api/modules.ts: proxy mooncakes.io modules API
+- Add api/download.ts: proxy download.mooncakes.io zip download
+- Add vercel.json: CORS headers for /api/* routes
+- Add @vercel/node dev dependency
+- Update fetcher.ts: production download path uses /api/download
+  without .zip suffix (Vercel treats .zip as static file)
+- Update DEPLOY.md: Vercel deployment guide
