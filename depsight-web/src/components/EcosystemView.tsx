@@ -45,7 +45,9 @@ function buildEcosystemFromModules(modules: MooncakesModule[]): EcosystemData {
   }
   const active = active30 + active90;
 
-  // 健康分分布估算
+  // 健康分分布：按引擎五维评分模型估算（freshness/size 无列表级数据，用默认值）
+  // 与引擎 single_module_score 对齐：compliance(license) 40/100, deprecated(yanked) 0/100,
+  // activity(created_at) 天数分档, freshness 无数据 50, size 无数据 80
   const scoreDist: Record<string, number> = {
     "90-100": 0,
     "80-89": 0,
@@ -54,21 +56,40 @@ function buildEcosystemFromModules(modules: MooncakesModule[]): EcosystemData {
     "50-59": 0,
     "0-49": 0,
   };
+
+  /** 与引擎 activity_score 一致的天数分档 */
+  function activityScore(days: number): number {
+    if (days <= 30) return 100;
+    if (days <= 90) return 90;
+    if (days <= 180) return 75;
+    if (days <= 365) return 60;
+    return 30;
+  }
+
   for (const m of modules) {
-    let score = 50;
-    if (m.license?.trim()) score += 20;
-    if (m.repository?.trim()) score += 10;
-    if (m.description?.trim()) score += 5;
-    if (m.keywords?.length) score += 5;
-    if (!m.yanked) score += 10;
-
-    const days = m.created_at
+    // compliance：有 license → 100，无 → 40（引擎默认值）
+    const compliance = m.license?.trim() ? 100 : 40;
+    // deprecated：yanked → 0，否则 → 100
+    const deprecated = m.yanked ? 0 : 100;
+    // activity：created_at 天数分档，无数据 → 50（引擎默认值）
+    const daysAgo = m.created_at
       ? Math.floor((now - new Date(m.created_at).getTime()) / DAY)
-      : 9999;
-    if (days <= 30) score += 10;
-    else if (days <= 90) score += 5;
+      : null;
+    const activity =
+      daysAgo !== null ? activityScore(Math.max(0, daysAgo)) : 50;
+    // freshness / size：列表级无数据，用引擎默认值
+    const freshness = 50;
+    const size = 80;
 
-    score = Math.min(100, score);
+    // 引擎加权：freshness 0.25 / compliance 0.20 / deprecated 0.25 / size 0.20 / activity 0.10
+    const weighted =
+      freshness * 0.25 +
+      compliance * 0.2 +
+      deprecated * 0.25 +
+      size * 0.2 +
+      activity * 0.1;
+    const score = Math.round(Math.min(100, weighted));
+
     if (score >= 90) scoreDist["90-100"]++;
     else if (score >= 80) scoreDist["80-89"]++;
     else if (score >= 70) scoreDist["70-79"]++;
@@ -77,6 +98,7 @@ function buildEcosystemFromModules(modules: MooncakesModule[]): EcosystemData {
     else scoreDist["0-49"]++;
   }
 
+  // 用每个分布区间的中位数估算平均值（与引擎 round 行为一致）
   const scoreVals = Object.entries(scoreDist).flatMap(([range, count]) => {
     const [lo, hi] = range.split("-").map(Number);
     const mid = (lo + hi) / 2;
@@ -86,7 +108,7 @@ function buildEcosystemFromModules(modules: MooncakesModule[]): EcosystemData {
     ? Math.round(scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length)
     : 0;
 
-  // 风险分布：仅统计列表中真实可见的信号（体积风险需逐个拉源码，此处不估算）
+  // 风险分布：基于真实 mooncakes 字段
   const riskCounts: Record<string, number> = {
     OUTDATED: modules.filter((m) => m.yanked).length,
     LICENSE: unlicensed,
@@ -568,7 +590,10 @@ export function EcosystemView() {
           <div className="workbench-card workbench-chart-card">
             <div className="workbench-card-header">
               <h3 className="workbench-card-title">
-                Health Score Distribution
+                Health Score Distribution{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  (estimated from metadata)
+                </span>
               </h3>
             </div>
             <div className="workbench-card-body">
