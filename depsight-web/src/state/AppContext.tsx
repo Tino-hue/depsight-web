@@ -198,6 +198,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const entries = loadHistory();
     const latest = entries[0];
     if (latest) {
+      // oxlint-disable-next-line react/set-state-in-effect
       setLastResult(latest.result);
       setLastGraph(latest.result.graph ?? null);
       setLastRootMod(latest.result._root_mod ?? null);
@@ -328,6 +329,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
+// oxlint-disable-next-line react/only-export-components
 export function useApp(): AppContextValue {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error("useApp must be used within <AppProvider>");

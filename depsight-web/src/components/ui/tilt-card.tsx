@@ -4,7 +4,7 @@
 //
 // The engine writes CSS custom properties each frame; transforms come from
 // variables so the spring animation never fights inline styles.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import "./tilt-card.css";
@@ -32,13 +32,18 @@ export default function TiltCard({
 }: TiltCardProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef({ tiltStrength, glare, lift });
-  settingsRef.current = { tiltStrength, glare, lift };
+  // useLayoutEffect 在 DOM 提交后同步写入，避免 render 期间修改 ref
+  useLayoutEffect(() => {
+    settingsRef.current = { tiltStrength, glare, lift };
+  }, [tiltStrength, glare, lift]);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
 
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
     // Spring state for the tilt axes; `light` is the hover-activation level
     // (drives glare opacity and the hover lift).
     const x = { p: 0, v: 0, target: 0 };
@@ -53,7 +58,10 @@ export default function TiltCard({
       const style = root.style;
       style.setProperty("--tc-rx", `${(y.p * angle).toFixed(3)}deg`);
       style.setProperty("--tc-ry", `${(-x.p * angle).toFixed(3)}deg`);
-      style.setProperty("--tc-lift", `${(-light.p * (reduced ? 0 : l)).toFixed(2)}px`);
+      style.setProperty(
+        "--tc-lift",
+        `${(-light.p * (reduced ? 0 : l)).toFixed(2)}px`,
+      );
       style.setProperty("--tc-light-x", `${((x.p + 1) * 50).toFixed(2)}%`);
       style.setProperty("--tc-light-y", `${((y.p + 1) * 50).toFixed(2)}%`);
       style.setProperty("--tc-glare-o", (g * light.p).toFixed(4));
@@ -101,8 +109,16 @@ export default function TiltCard({
     const aimAt = (event: PointerEvent) => {
       const rect = root.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      x.target = clamp(((event.clientX - rect.left) / rect.width) * 2 - 1, -1, 1);
-      y.target = clamp(((event.clientY - rect.top) / rect.height) * 2 - 1, -1, 1);
+      x.target = clamp(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -1,
+        1,
+      );
+      y.target = clamp(
+        ((event.clientY - rect.top) / rect.height) * 2 - 1,
+        -1,
+        1,
+      );
       light.target = 1;
       wake();
     };

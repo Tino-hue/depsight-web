@@ -413,6 +413,7 @@ export function EcosystemView() {
 
   // 首屏即真实数据：加载中 / 失败重试，不再渲染 demo
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect
     void loadReal();
   }, [loadReal]);
 
@@ -598,6 +599,7 @@ export function EcosystemView() {
             </div>
             <div className="workbench-card-body">
               <div ref={hist.wrapRef} className="w-full">
+                {/* oxlint-disable-next-line react/refs */}
                 <canvas ref={hist.canvasRef} className="block w-full" />
               </div>
             </div>
@@ -608,6 +610,7 @@ export function EcosystemView() {
             </div>
             <div className="workbench-card-body">
               <div ref={risk.wrapRef} className="w-full">
+                {/* oxlint-disable-next-line react/refs */}
                 <canvas ref={risk.canvasRef} className="block w-full" />
               </div>
             </div>
@@ -627,6 +630,7 @@ export function EcosystemView() {
           </div>
           <div className="workbench-card-body">
             <div ref={lic.wrapRef} className="w-full">
+              {/* oxlint-disable-next-line react/refs */}
               <canvas ref={lic.canvasRef} className="block w-full" />
             </div>
           </div>

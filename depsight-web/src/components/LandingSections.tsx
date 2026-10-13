@@ -41,7 +41,8 @@ function Reveal({
     const el = ref.current;
     if (!el) return;
     if (typeof IntersectionObserver === "undefined") {
-      setVisible(true);
+      // 无 IO 环境（如旧浏览器/SSR）：微任务中设置，避免同步 setState 触发级联渲染
+      queueMicrotask(() => setVisible(true));
       return;
     }
     const io = new IntersectionObserver(

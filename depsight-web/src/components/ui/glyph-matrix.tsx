@@ -1,6 +1,6 @@
 // 字符矩阵背景：数字/符号不断随机变化的 canvas 动画
 // 来自 React Bits 的 GlyphMatrix，支持主题色自适应
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { useApp } from "@/state/AppContext";
 import { cn } from "@/lib/utils";
@@ -25,7 +25,10 @@ export function GlyphMatrix({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { theme } = useApp();
   const themeRef = useRef(theme);
-  themeRef.current = theme;
+  // useLayoutEffect 在 DOM 提交后同步写入，避免 render 期间修改 ref
+  useLayoutEffect(() => {
+    themeRef.current = theme;
+  }, [theme]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -55,8 +58,9 @@ export function GlyphMatrix({
       cols = Math.ceil(rect.width / cellSize);
       rows = Math.ceil(rect.height / cellSize);
       grid = Array.from({ length: rows }, () =>
-        Array.from({ length: cols }, () =>
-          chars[Math.floor(Math.random() * chars.length)],
+        Array.from(
+          { length: cols },
+          () => chars[Math.floor(Math.random() * chars.length)],
         ),
       );
     }
@@ -76,7 +80,8 @@ export function GlyphMatrix({
       for (let y = 0; y < rows; y++) {
         // 底部渐隐
         const ratio = y / rows;
-        const fade = ratio < fadeBottom ? 1 : 1 - (ratio - fadeBottom) / (1 - fadeBottom);
+        const fade =
+          ratio < fadeBottom ? 1 : 1 - (ratio - fadeBottom) / (1 - fadeBottom);
         const rowAlpha = Math.max(0, fade);
 
         for (let x = 0; x < cols; x++) {

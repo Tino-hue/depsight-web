@@ -1,6 +1,6 @@
 // 动画主题切换按钮：圆形按钮，点击后太阳/月亮图标旋转互换
 // 基于 framer-motion（motion）实现，来自 React Bits 的 AnimatedThemeToggler
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Sun, Moon } from "lucide-react";
 
@@ -19,8 +19,8 @@ export function AnimatedThemeToggler({
   isDark,
   onToggle,
 }: AnimatedThemeTogglerProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // mounted 仅用于 SSR hydration 对齐；客户端直接初始 true 即可
+  const [mounted] = useState(true);
 
   return (
     <button
