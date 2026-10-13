@@ -1,4 +1,0 @@
-chore: remove accidentally committed test scripts and temp files
-
-Remove .commit-msg.txt and test-*.mjs that were accidentally
-included in the previous Vercel deployment commit.
