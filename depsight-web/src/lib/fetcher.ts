@@ -23,11 +23,14 @@ import { extractZipEntryText, listZipEntries, inflateEntryRaw } from "./zip";
 
 const API_BASE = "https://mooncakes.io/api/v0";
 const ASSETS_SOURCE = "https://assets.mooncakes.io/source";
-// Node 直连；浏览器经 Vite proxy 绕 CORS（vite.config.ts 配 /download-proxy → download.mooncakes.io）
-const DOWNLOAD_BASE =
-  typeof window === "undefined"
-    ? "https://download.mooncakes.io/user"
-    : "/download-proxy/user";
+
+// 下载路径：Node 直连；浏览器 dev 走 Vite proxy，生产走 Cloudflare Worker
+function resolveDownloadBase(): string {
+  if (typeof window === "undefined")
+    return "https://download.mooncakes.io/user";
+  // dev server: vite proxy; production: same-origin /api
+  return import.meta.env.DEV ? "/download-proxy/user" : "/api/download";
+}
 
 const REQUEST_TIMEOUT = 15000;
 
@@ -335,7 +338,7 @@ async function fetchModJsonFromZip(
   version: string,
 ): Promise<string> {
   const resp = await fetchWithTimeout(
-    `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`,
+    `${resolveDownloadBase()}/${name}/${encodeURIComponent(version)}.zip`,
     60000,
   );
   if (!resp.ok) throw new Error(`zip HTTP ${resp.status}`);
@@ -435,7 +438,7 @@ export async function fetchLicenseText(
   const task = (async () => {
     try {
       const resp = await fetchWithTimeout(
-        `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`,
+        `${resolveDownloadBase()}/${name}/${encodeURIComponent(version)}.zip`,
         60000,
       );
       if (!resp.ok) return null;
@@ -543,7 +546,7 @@ export async function fetchSourceStats(
   const task = (async (): Promise<SourceStats | null> => {
     try {
       const resp = await fetchWithTimeout(
-        `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`,
+        `${resolveDownloadBase()}/${name}/${encodeURIComponent(version)}.zip`,
         60000,
       );
       if (!resp.ok) return null;
