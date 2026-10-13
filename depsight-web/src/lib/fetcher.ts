@@ -1,13 +1,14 @@
 // mooncakes.io 数据拉取器 —— 基于官方 v0 API（2026-10-04 实测可用，CORS 全开放）
 //
 // 数据源：
-//   GET https://mooncakes.io/api/v0/modules                              全量模块列表（真实搜索用，约 1MB）
-//   GET https://mooncakes.io/api/v0/manifest/{name}                      模块元数据：latest_version、全部版本、
-//                                                                          license、repository、yanked、created_at
-//   GET https://assets.mooncakes.io/source/{name}@{ver}/moon.mod.json    生成的模块描述（含 deps，第三方包可用）
-//   GET https://download.mooncakes.io/user/{name}/{ver}.zip              发布 zip 兜底：第三方包内含 moon.mod.json，
-//                                                                        官方包（moonbitlang/core 等）只有 TOML 版 moon.mod
+//   GET https://mooncakes.io/api/v0/modules                    全量模块列表（真实搜索用，约 1MB）
+//   GET https://mooncakes.io/api/v0/manifest/{name}            模块元数据：latest_version、全部版本、
+//                                                                license、repository、yanked、created_at
+//   GET https://download.mooncakes.io/user/{name}/{ver}.zip    发布 zip：第三方包内含 moon.mod.json，
+//                                                                官方包（moonbitlang/core 等）只有 TOML 版 moon.mod
 //
+// 注意：assets.mooncakes.io 只有 module_index.json 等文档资产，不含 moon.mod.json（2026-10-13 实测全 404），
+// 源码统一走 download zip 提取。
 // 设计要点：模块描述随包发布在注册中心，分析只需元数据，无需下载/安装包本体。
 // 从 js/fetcher.js 迁移，保持所有 API 调用逻辑不变。
 
@@ -22,16 +23,6 @@ import type {
 import { extractZipEntryText, listZipEntries, inflateEntryRaw } from "./zip";
 
 const API_BASE = "https://mooncakes.io/api/v0";
-
-// assets 路径：Node 直连；浏览器 dev 直连（CORS 开放），生产走 Vercel 代理
-// （assets.mooncakes.io 国内不可达，走代理避免每个依赖卡 15s 超时）
-function resolveAssetsBase(): string {
-  if (typeof window === "undefined")
-    return "https://assets.mooncakes.io/source";
-  return import.meta.env.DEV
-    ? "https://assets.mooncakes.io/source"
-    : "/api/assets";
-}
 
 // 下载路径：Node 直连；浏览器 dev 走 Vite proxy，生产走 Vercel API
 function resolveDownloadBase(): string {
@@ -291,7 +282,7 @@ export async function fetchModuleManifest(
   }
 }
 
-// ===== 拉取指定版本模块描述文本（缓存 → assets 直取 → zip 兜底）=====
+// ===== 拉取指定版本模块描述文本（缓存 → zip 提取）=====
 // 并发去重：同一 name@version 的在飞请求共享一个 Promise
 const modTextInFlight = new Map<string, Promise<string | null>>();
 
@@ -307,27 +298,7 @@ export async function fetchModJsonText(
   if (pending) return pending;
 
   const task = (async () => {
-    const ver = encodeURIComponent(version);
-    // 路径 1：assets 源码直取（大多数包可用）
-    try {
-      const resp = await fetchWithTimeout(
-        `${resolveAssetsBase()}/${name}@${ver}/moon.mod.json`,
-      );
-      if (resp.ok) {
-        const text = await resp.text();
-        writeModTextCache(name, version, text);
-        return text;
-      }
-      console.warn(
-        `[fetcher] ${name}@${version} assets 路径 HTTP ${resp.status}`,
-      );
-    } catch (e) {
-      console.warn(
-        `[fetcher] ${name}@${version} assets 路径异常:`,
-        e instanceof Error ? e.message : String(e),
-      );
-    }
-    // 路径 2：下载发布 zip，提取 moon.mod.json 或 moon.mod（官方包走这条路）
+    // 从发布 zip 提取 moon.mod.json 或 moon.mod（assets bucket 无 mod 文件，统一走这条）
     try {
       const text = await fetchModJsonFromZip(name, version);
       writeModTextCache(name, version, text);
@@ -695,7 +666,7 @@ export async function fetchPackageContext(
       Object.entries(curMod.deps || {}).map(([depName, depVersion]) =>
         limit(async () => {
           // "latest" 落地：无版本声明的依赖（import { "pkg" }）先用 manifest 的
-          // latest_version 解析出真实版本，否则 assets/zip 双路径必然 404 断链
+          // latest_version 解析出真实版本，否则 zip 路径必然 404 断链
           let depVer = depVersion;
           const manifest = await fetchModuleManifest(depName);
           if (depVer === "latest") {

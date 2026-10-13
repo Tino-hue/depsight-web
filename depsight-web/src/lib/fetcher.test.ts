@@ -1,5 +1,5 @@
 // fetcher 在线验证（13 条）：针对 mooncakes.io v0 端点（2026-10-04 实测可用）
-// 覆盖：全量模块列表 / manifest / moon.mod.json 双路径（assets 直取 + zip 兜底）/ BFS 依赖展开
+// 覆盖：全量模块列表 / manifest / moon.mod.json zip 提取 / BFS 依赖展开
 // 需要网络；单条超时 30s（vite.config.ts testTimeout），整体可能较慢
 // OFFLINE=1 时跳过全部在线测试（CI 或网络受限环境）
 /// <reference types="node" />
@@ -13,6 +13,85 @@ import {
 } from "./fetcher";
 
 const describeOnline = process.env.OFFLINE === "1" ? describe.skip : describe;
+
+/** 构造最小 stored（不压缩）zip，条目名支持目录层级（解析器按 basename 匹配） */
+function buildStoredZip(
+  entries: Record<string, string>,
+): Uint8Array<ArrayBuffer> {
+  const enc = new TextEncoder();
+  const u16 = (v: number) => new Uint8Array([v & 0xff, (v >> 8) & 0xff]);
+  const u32 = (v: number) =>
+    new Uint8Array([
+      v & 0xff,
+      (v >> 8) & 0xff,
+      (v >> 16) & 0xff,
+      (v >>> 24) & 0xff,
+    ]);
+  const parts: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(entries)) {
+    const nb = enc.encode(name);
+    const db = enc.encode(content);
+    const lfh = [
+      u32(0x04034b50),
+      u16(20),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(0), // crc32：解析器不校验，写 0
+      u32(db.length),
+      u32(db.length),
+      u16(nb.length),
+      u16(0),
+      nb,
+      db,
+    ];
+    parts.push(...lfh);
+    central.push(
+      u32(0x02014b50),
+      u16(20),
+      u16(20),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(0),
+      u32(db.length),
+      u32(db.length),
+      u16(nb.length),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(0),
+      u32(offset),
+      nb,
+    );
+    offset += lfh.reduce((s, x) => s + x.length, 0);
+  }
+  const cdSize = central.reduce((s, x) => s + x.length, 0);
+  const count = Object.keys(entries).length;
+  const eocd = [
+    u32(0x06054b50),
+    u16(0),
+    u16(0),
+    u16(count),
+    u16(count),
+    u32(cdSize),
+    u32(offset),
+    u16(0),
+  ];
+  const all = [...parts, ...central, ...eocd];
+  const out = new Uint8Array(all.reduce((s, x) => s + x.length, 0));
+  let p = 0;
+  for (const x of all) {
+    out.set(x, p);
+    p += x.length;
+  }
+  return out;
+}
 
 describeOnline("fetcher 在线验证（mooncakes.io v0）", () => {
   it("1. 全量模块列表返回非空数组", async () => {
@@ -47,7 +126,7 @@ describeOnline("fetcher 在线验证（mooncakes.io v0）", () => {
     expect(parseMod(text!).name).toBe("moonbitlang/core");
   });
 
-  it("6. 第三方包走 assets 直取路径（前 5 个候选中取第一个可用）", async () => {
+  it("6. 第三方包走 zip 提取路径（前 5 个候选中取第一个可用）", async () => {
     const mods = await fetchAllModules();
     const candidates = mods
       .filter((m) => !m.name.startsWith("moonbitlang/"))
@@ -188,12 +267,15 @@ describe("fetchPackageContext：latest 解析（mock fetch）", () => {
           ? new Response(JSON.stringify(data), { status: 200 })
           : new Response("", { status: 404 });
       }
-      const src = url.match(/\/source\/(.+)@([^/]+)\/moon\.mod\.json$/);
-      if (src) {
-        const key = `${decodeURIComponent(src[1])}@${decodeURIComponent(src[2])}`;
+      const zp = url.match(/\/user\/(.+)\/([^/]+)\.zip$/);
+      if (zp) {
+        const key = `${decodeURIComponent(zp[1])}@${decodeURIComponent(zp[2])}`;
         const data = modTexts[key];
         return data
-          ? new Response(JSON.stringify(data), { status: 200 })
+          ? new Response(
+              buildStoredZip({ "moon.mod.json": JSON.stringify(data) }),
+              { status: 200 },
+            )
           : new Response("", { status: 404 });
       }
       return new Response("", { status: 404 });
@@ -219,12 +301,14 @@ describe("fetchPackageContext：latest 解析（mock fetch）", () => {
         return new Response(JSON.stringify({ latest_version: "0.4.0" }), {
           status: 200,
         });
-      if (url.includes("/source/moonbitlang/x@0.4.0/moon.mod.json"))
+      if (/\/user\/moonbitlang\/x\/0\.4\.0\.zip$/.test(url))
         return new Response(
-          JSON.stringify({
-            name: "moonbitlang/x",
-            version: "0.4.0",
-            deps: { "ghost/pkg": "latest" },
+          buildStoredZip({
+            "moon.mod.json": JSON.stringify({
+              name: "moonbitlang/x",
+              version: "0.4.0",
+              deps: { "ghost/pkg": "latest" },
+            }),
           }),
           { status: 200 },
         );
@@ -251,90 +335,11 @@ describe("fetchPackageContext：license_source 标注（mock fetch）", () => {
   const MIT_LICENSE_TEXT =
     'MIT License\n\nCopyright (c) 2024\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction.\n';
 
-  /** 构造最小 stored（不压缩）zip，条目名支持目录层级（解析器按 basename 匹配） */
-  function buildStoredZip(
-    entries: Record<string, string>,
-  ): Uint8Array<ArrayBuffer> {
-    const enc = new TextEncoder();
-    const u16 = (v: number) => new Uint8Array([v & 0xff, (v >> 8) & 0xff]);
-    const u32 = (v: number) =>
-      new Uint8Array([
-        v & 0xff,
-        (v >> 8) & 0xff,
-        (v >> 16) & 0xff,
-        (v >>> 24) & 0xff,
-      ]);
-    const parts: Uint8Array[] = [];
-    const central: Uint8Array[] = [];
-    let offset = 0;
-    for (const [name, content] of Object.entries(entries)) {
-      const nb = enc.encode(name);
-      const db = enc.encode(content);
-      const lfh = [
-        u32(0x04034b50),
-        u16(20),
-        u16(0),
-        u16(0),
-        u16(0),
-        u16(0),
-        u32(0), // crc32：解析器不校验，写 0
-        u32(db.length),
-        u32(db.length),
-        u16(nb.length),
-        u16(0),
-        nb,
-        db,
-      ];
-      parts.push(...lfh);
-      central.push(
-        u32(0x02014b50),
-        u16(20),
-        u16(20),
-        u16(0),
-        u16(0),
-        u16(0),
-        u16(0),
-        u32(0),
-        u32(db.length),
-        u32(db.length),
-        u16(nb.length),
-        u16(0),
-        u16(0),
-        u16(0),
-        u16(0),
-        u32(0),
-        u32(offset),
-        nb,
-      );
-      offset += lfh.reduce((s, x) => s + x.length, 0);
-    }
-    const cdSize = central.reduce((s, x) => s + x.length, 0);
-    const count = Object.keys(entries).length;
-    const eocd = [
-      u32(0x06054b50),
-      u16(0),
-      u16(0),
-      u16(count),
-      u16(count),
-      u32(cdSize),
-      u32(offset),
-      u16(0),
-    ];
-    const all = [...parts, ...central, ...eocd];
-    const out = new Uint8Array(all.reduce((s, x) => s + x.length, 0));
-    let p = 0;
-    for (const x of all) {
-      out.set(x, p);
-      p += x.length;
-    }
-    return out;
-  }
-
-  /** mock 三套路由：manifest / assets 源码 / 发布 zip */
+  /** mock 两套路由：manifest / 发布 zip（zip 内含 moon.mod.json，可追加条目） */
   function mockRoutes(opts: {
     manifestLicense?: string;
     modLicense?: string;
-    zipBody?: Uint8Array<ArrayBuffer> | null;
+    zipEntries?: Record<string, string>;
   }) {
     const now = new Date().toISOString();
     vi.spyOn(globalThis, "fetch").mockImplementation((async (
@@ -358,21 +363,19 @@ describe("fetchPackageContext：license_source 标注（mock fetch）", () => {
           { status: 200 },
         );
       }
-      if (/\/source\/.+@.+\/moon\.mod\.json$/.test(url)) {
+      if (/\/user\/.+\/[^/]+\.zip$/.test(url)) {
         return new Response(
-          JSON.stringify({
-            name: "moonbitlang/x",
-            version: "0.4.0",
-            ...(opts.modLicense ? { license: opts.modLicense } : {}),
-            deps: {},
+          buildStoredZip({
+            "moon.mod.json": JSON.stringify({
+              name: "moonbitlang/x",
+              version: "0.4.0",
+              ...(opts.modLicense ? { license: opts.modLicense } : {}),
+              deps: {},
+            }),
+            ...opts.zipEntries,
           }),
           { status: 200 },
         );
-      }
-      if (/\/user\/.+\/[^/]+\.zip$/.test(url)) {
-        return opts.zipBody
-          ? new Response(opts.zipBody, { status: 200 })
-          : new Response("", { status: 404 });
       }
       return new Response("", { status: 404 });
     }) as typeof fetch);
@@ -396,9 +399,9 @@ describe("fetchPackageContext：license_source 标注（mock fetch）", () => {
 
   it("manifest/mod 均无 license → zip 内 LICENSE 原文进 license_text，引擎指纹闭环", async () => {
     mockRoutes({
-      zipBody: buildStoredZip({
+      zipEntries: {
         "moonbitlang-x-0.4.0/LICENSE": MIT_LICENSE_TEXT,
-      }),
+      },
     });
     const ctx = await fetchPackageContext("moonbitlang/x");
     const meta = ctx.metadata["moonbitlang/x@0.4.0"];
@@ -413,8 +416,8 @@ describe("fetchPackageContext：license_source 标注（mock fetch）", () => {
     );
   });
 
-  it("zip 无 LICENSE（404）→ license_text 缺省且不崩溃", async () => {
-    mockRoutes({ zipBody: null });
+  it("zip 无 LICENSE → license_text 缺省且不崩溃", async () => {
+    mockRoutes({});
     const ctx = await fetchPackageContext("moonbitlang/x");
     const meta = ctx.metadata["moonbitlang/x@0.4.0"];
     expect(meta.license).toBeUndefined();
