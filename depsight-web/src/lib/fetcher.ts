@@ -22,7 +22,16 @@ import type {
 import { extractZipEntryText, listZipEntries, inflateEntryRaw } from "./zip";
 
 const API_BASE = "https://mooncakes.io/api/v0";
-const ASSETS_SOURCE = "https://assets.mooncakes.io/source";
+
+// assets 路径：Node 直连；浏览器 dev 直连（CORS 开放），生产走 Vercel 代理
+// （assets.mooncakes.io 国内不可达，走代理避免每个依赖卡 15s 超时）
+function resolveAssetsBase(): string {
+  if (typeof window === "undefined")
+    return "https://assets.mooncakes.io/source";
+  return import.meta.env.DEV
+    ? "https://assets.mooncakes.io/source"
+    : "/api/assets";
+}
 
 // 下载路径：Node 直连；浏览器 dev 走 Vite proxy，生产走 Vercel API
 function resolveDownloadBase(): string {
@@ -302,7 +311,7 @@ export async function fetchModJsonText(
     // 路径 1：assets 源码直取（大多数包可用）
     try {
       const resp = await fetchWithTimeout(
-        `${ASSETS_SOURCE}/${name}@${ver}/moon.mod.json`,
+        `${resolveAssetsBase()}/${name}@${ver}/moon.mod.json`,
       );
       if (resp.ok) {
         const text = await resp.text();
