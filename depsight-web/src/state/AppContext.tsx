@@ -182,6 +182,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
 
   // 启动时恢复最近一次分析（刷新不丢）；#share= 优先（外部分享链接）
+  // initialHash 经 useState 初始捕获后不可变，仅需首次执行一次
   useEffect(() => {
     let cancelled = false;
     const hash = initialHash;
@@ -204,7 +205,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialHash]);
 
   const applyResult = useCallback((result: AnalysisResult): boolean => {
     if (result.error) return false;
@@ -274,6 +275,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAiOpen(true);
   }, []);
 
+  // setView 经 useCallback([]) 包装后引用稳定，无需作为依赖
   const value = useMemo<AppContextValue>(
     () => ({
       wasmStatus,
@@ -298,6 +300,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       aiTask,
       requestAi,
     }),
+    // setView 由 useCallback([]) 保证引用稳定，列入依赖仅为消除 linter 误报
     [
       wasmStatus,
       useWasm,
@@ -313,6 +316,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createShareUrl,
       copyShareUrl,
       view,
+      setView,
       theme,
       toggleTheme,
       aiOpen,

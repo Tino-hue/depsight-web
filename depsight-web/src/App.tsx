@@ -1,14 +1,18 @@
 // 应用根组件：Hero 落地首页 + 工作台视图切换 + AI 抽屉
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 
 import { AiDrawer } from "@/components/AiDrawer";
 import { AnalyzeView } from "@/components/AnalyzeView";
 import { EcosystemView } from "@/components/EcosystemView";
-import { GraphView } from "@/components/GraphView";
 import { HeroView } from "@/components/HeroView";
 import { TrendsView } from "@/components/TrendsView";
 import ClickSpark from "@/components/ui/click-spark";
 import { useApp } from "@/state/AppContext";
+
+// GraphView 含 three.js OrbitControls，体积大，懒加载分包
+const GraphView = lazy(() =>
+  import("@/components/GraphView").then((m) => ({ default: m.GraphView })),
+);
 
 const VIEW_TITLES: Record<string, string> = {
   hero: "depsight — MoonBit Dependency Health",
@@ -50,7 +54,9 @@ export default function App() {
               <AnalyzeView />
             </div>
             <div hidden={view !== "graph"}>
-              <GraphView />
+              <Suspense fallback={null}>
+                <GraphView />
+              </Suspense>
             </div>
             <div hidden={view !== "trends"}>
               <TrendsView />

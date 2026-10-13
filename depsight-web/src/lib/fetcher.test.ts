@@ -1,6 +1,8 @@
 // fetcher 在线验证（13 条）：针对 mooncakes.io v0 端点（2026-10-04 实测可用）
 // 覆盖：全量模块列表 / manifest / moon.mod.json 双路径（assets 直取 + zip 兜底）/ BFS 依赖展开
 // 需要网络；单条超时 30s（vite.config.ts testTimeout），整体可能较慢
+// OFFLINE=1 时跳过全部在线测试（CI 或网络受限环境）
+/// <reference types="node" />
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseMod, runJsAnalyzer } from "./analyzer";
 import {
@@ -10,7 +12,9 @@ import {
   fetchPackageContext,
 } from "./fetcher";
 
-describe("fetcher 在线验证（mooncakes.io v0）", () => {
+const describeOnline = process.env.OFFLINE === "1" ? describe.skip : describe;
+
+describeOnline("fetcher 在线验证（mooncakes.io v0）", () => {
   it("1. 全量模块列表返回非空数组", async () => {
     const mods = await fetchAllModules();
     expect(Array.isArray(mods)).toBe(true);

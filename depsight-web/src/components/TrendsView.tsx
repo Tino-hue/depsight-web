@@ -233,7 +233,12 @@ export function TrendsView() {
   const names = Object.keys(allTrends);
   const current =
     selected && names.includes(selected) ? selected : (names[0] ?? "");
-  const points = current ? (allTrends[current] ?? []) : [];
+  // allTrends[current] 每次渲染返回新数组引用，useMemo 稳定之
+  const rawPoints = useMemo(
+    () => (current ? (allTrends[current] ?? []) : []),
+    [current, allTrends],
+  );
+  const points = rawPoints;
 
   // 重绘（ResizeObserver：视图从 hidden 切回可见时 wrap 宽度 0→实际值，需补绘）
   useEffect(() => {

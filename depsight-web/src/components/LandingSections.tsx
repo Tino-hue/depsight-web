@@ -1,6 +1,6 @@
 // Hero 落地页滚动区块：Features / How it works / Tech stack / Footer
 // 样式集中 index.css 的 @layer components（.landing-*），深浅色经 CSS 变量适配
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import {
   Atom,
   Gauge,
@@ -12,7 +12,12 @@ import {
   Wind,
 } from "lucide-react";
 
-import { Feature3D } from "@/components/Feature3D";
+// Feature3D 含 three.js，体积较大，懒加载分包
+const Feature3D = lazy(() =>
+  import("@/components/Feature3D").then((m) => ({
+    default: m.Feature3D,
+  })),
+);
 import TiltCard from "@/components/ui/tilt-card";
 import { useApp } from "@/state/AppContext";
 import { cn } from "@/lib/utils";
@@ -167,7 +172,9 @@ function FeaturesSection() {
             />
           </div>
           <div className="landing-features-3d">
-            <Feature3D theme={theme} className="landing-3d-canvas" />
+            <Suspense fallback={null}>
+              <Feature3D theme={theme} className="landing-3d-canvas" />
+            </Suspense>
           </div>
         </div>
         <div className="landing-grid">
