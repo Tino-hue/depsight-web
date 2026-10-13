@@ -39,7 +39,6 @@ export async function extractZipEntryText(
       throw new Error("Invalid zip: bad CDFH signature");
     const method = view.getUint16(p + 10, true);
     const compSize = view.getUint32(p + 20, true);
-    const uncompSize = view.getUint32(p + 24, true);
     const nameLen = view.getUint16(p + 28, true);
     const extraLen = view.getUint16(p + 30, true);
     const commentLen = view.getUint16(p + 32, true);
@@ -111,6 +110,7 @@ export function listZipEntries(buf: Uint8Array<ArrayBuffer>): ZipEntryInfo[] {
       throw new Error("Invalid zip: bad CDFH signature");
     const method = view.getUint16(p + 10, true);
     const compSize = view.getUint32(p + 20, true);
+    const uncompSize = view.getUint32(p + 24, true);
     const nameLen = view.getUint16(p + 28, true);
     const extraLen = view.getUint16(p + 30, true);
     const commentLen = view.getUint16(p + 32, true);

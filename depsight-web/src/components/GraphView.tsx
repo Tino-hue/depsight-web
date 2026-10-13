@@ -11,13 +11,18 @@ import { WorkbenchShell } from "@/components/WorkbenchShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fmtBytes } from "@/lib/analyzer";
-import type { AnalysisResult, DepGraph, SelectedNodeInfo } from "@/lib/types";
+import type {
+  AnalysisResult,
+  DepGraph,
+  GraphNode,
+  SelectedNodeInfo,
+} from "@/lib/types";
 import { useApp } from "@/state/AppContext";
 
 // ===== 3D 引擎（与旧版 graph3d.js 行为一致）=====
 interface NodeEntry {
   mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshPhongMaterial>;
-  node: { id: string; name: string; version: string; depth: number };
+  node: GraphNode;
   health: number;
   meta?: AnalysisResult["node_metas"][string];
 }
