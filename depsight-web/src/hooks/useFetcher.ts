@@ -27,10 +27,12 @@ export function useFetcher(): UseFetcherReturn {
       try {
         const ctx = await fetchPackageContext(name, version ?? null)
         setFetchedCount(Object.keys(ctx.modules || {}).length + 1)
+        setError(null)
         return ctx
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-        return null
+        const msg = e instanceof Error ? e.message : String(e)
+        setError(msg)
+        throw new Error(msg)
       } finally {
         setLoading(false)
       }

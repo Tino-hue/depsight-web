@@ -23,7 +23,11 @@ import { extractZipEntryText, listZipEntries, inflateEntryRaw } from "./zip";
 
 const API_BASE = "https://mooncakes.io/api/v0";
 const ASSETS_SOURCE = "https://assets.mooncakes.io/source";
-const DOWNLOAD_BASE = "https://download.mooncakes.io/user";
+// Node 直连；浏览器经 Vite proxy 绕 CORS（vite.config.ts 配 /download-proxy → download.mooncakes.io）
+const DOWNLOAD_BASE =
+  typeof window === "undefined"
+    ? "https://download.mooncakes.io/user"
+    : "/download-proxy/user";
 
 const REQUEST_TIMEOUT = 15000;
 
@@ -155,10 +159,13 @@ function writeModTextCache(name: string, version: string, text: string): void {
   }
 }
 
-// 带超时的 fetch
-async function fetchWithTimeout(url: string): Promise<Response> {
+// 带超时的 fetch（zip 下载等大文件可传更长 timeout）
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs?: number,
+): Promise<Response> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs ?? REQUEST_TIMEOUT);
   try {
     return await fetch(url, { signal: ctrl.signal });
   } finally {
@@ -183,7 +190,8 @@ export async function fetchAllModules(): Promise<MooncakesModule[]> {
         };
         if (
           Date.now() - fetchedAt <= MODULES_CACHE_TTL &&
-          Array.isArray(data)
+          Array.isArray(data) &&
+          data.every((m) => m.created_at) // 防御：旧缓存缺 created_at 时丢弃重拉
         ) {
           modulesCache = data;
           return modulesCache;
@@ -289,8 +297,14 @@ export async function fetchModJsonText(
         writeModTextCache(name, version, text);
         return text;
       }
-    } catch {
-      /* 超时/网络问题 → 走兜底 */
+      console.warn(
+        `[fetcher] ${name}@${version} assets 路径 HTTP ${resp.status}`,
+      );
+    } catch (e) {
+      console.warn(
+        `[fetcher] ${name}@${version} assets 路径异常:`,
+        e instanceof Error ? e.message : String(e),
+      );
     }
     // 路径 2：下载发布 zip，提取 moon.mod.json 或 moon.mod（官方包走这条路）
     try {
@@ -299,7 +313,7 @@ export async function fetchModJsonText(
       return text;
     } catch (e) {
       console.warn(
-        `[fetcher] ${name}@${version} 模块描述不可用:`,
+        `[fetcher] ${name}@${version} zip 路径不可用:`,
         e instanceof Error ? e.message : String(e),
       );
       return null;
@@ -322,6 +336,7 @@ async function fetchModJsonFromZip(
 ): Promise<string> {
   const resp = await fetchWithTimeout(
     `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`,
+    60000,
   );
   if (!resp.ok) throw new Error(`zip HTTP ${resp.status}`);
   const buf = new Uint8Array(await resp.arrayBuffer());
@@ -421,6 +436,7 @@ export async function fetchLicenseText(
     try {
       const resp = await fetchWithTimeout(
         `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`,
+        60000,
       );
       if (!resp.ok) return null;
       const buf = new Uint8Array(await resp.arrayBuffer());
@@ -528,6 +544,7 @@ export async function fetchSourceStats(
     try {
       const resp = await fetchWithTimeout(
         `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`,
+        60000,
       );
       if (!resp.ok) return null;
       const buf = new Uint8Array(await resp.arrayBuffer());

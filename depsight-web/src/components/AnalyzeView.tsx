@@ -82,12 +82,18 @@ export function AnalyzeView() {
           return;
         }
         setStatus("Fetching dependencies from mooncakes.io…");
-        const ctx = await fetcher.fetchContext(
-          name,
-          packageVersion.trim() || null,
-        );
+        let ctx;
+        try {
+          ctx = await fetcher.fetchContext(
+            name,
+            packageVersion.trim() || null,
+          );
+        } catch (e) {
+          setStatus(`Fetch failed: ${e instanceof Error ? e.message : String(e)}`);
+          return;
+        }
         if (!ctx) {
-          setStatus(`Fetch failed: ${fetcher.error ?? "unknown error"}`);
+          setStatus("Fetch failed: no context returned");
           return;
         }
         // 把拉到的 root mod 回填到文本框，便于用户编辑
