@@ -109,8 +109,10 @@ function buildEcosystemFromModules(modules: MooncakesModule[]): EcosystemData {
     : 0;
 
   // 风险分布：基于真实 mooncakes 字段
+  // 注意：mooncakes 模块列表 API 不提供"版本过期"和"废弃 API"数据，
+  // 这两项统计基于 yanked（撤回）和 yanked_reason（撤回原因）作为近似代理。
   const riskCounts: Record<string, number> = {
-    OUTDATED: modules.filter((m) => m.yanked).length,
+    YANKED: modules.filter((m) => m.yanked).length,
     LICENSE: unlicensed,
     DEPRECATED: modules.filter((m) => m.yanked && m.yanked_reason).length,
     ACTIVITY: stale,

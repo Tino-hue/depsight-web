@@ -41,8 +41,15 @@ export default async function handler(
   const name = withoutExt.slice(0, lastSlash);
   const version = withoutExt.slice(lastSlash + 1);
 
+  // 包名格式校验：防止路径遍历/开放代理
+  const NAME_RE = /^[a-z0-9_-]+\/[a-z0-9_-]+$/;
+  if (!NAME_RE.test(name) || name.includes("..") || name.includes("%") || name.includes("\\")) {
+    res.status(400).json({ error: "invalid package name format" });
+    return;
+  }
+
   try {
-    const target = `${DOWNLOAD_BASE}/${name}/${encodeURIComponent(version)}.zip`;
+    const target = `${DOWNLOAD_BASE}/${encodeURIComponent(name)}/${encodeURIComponent(version)}.zip`;
     const resp = await fetch(target, { redirect: "follow" });
     const buf = Buffer.from(await resp.arrayBuffer());
     const ct = resp.headers.get("content-type") || "application/zip";

@@ -12,7 +12,7 @@ import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button
 import { GlyphMatrix } from "@/components/ui/glyph-matrix";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 
-const GITHUB_URL = "https://github.com/peterzhao2008/depsight";
+const GITHUB_URL = "https://github.com/Tino-hue/depsight-web";
 
 /** 进场动画枚举（与 CSS keyframes 对应） */
 type AppearVariant = "pop" | "soft" | "btn" | "side" | "stat";

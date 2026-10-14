@@ -5,8 +5,8 @@
 // 加载时必须传 compileOptions { builtins: ['js-string'], importedStringConstants: '_' }，
 // 否则模块内 wasm:js-string 导入与 "_" 字符串常量模块无法解析。
 //
-// 桥接稳定性策略（v0.7.0-wasm 契约）：
-//   1. version() 契约门：期望 0.7.x，版本不符则禁用 WASM 走 JS fallback
+// 桥接稳定性策略（v0.8.0-wasm 契约）：
+//   1. version() 契约门：期望 0.8.x，版本不符则禁用 WASM 走 JS fallback
 //      （JS fallback 与 WASM 输出契约一致，行为不分裂）
 //   2. 失败可观测：getLastWasmError() 暴露最近一次失败原因
 //   3. 连续失败熔断：同一会话内连续失败 >= 3 次自动禁用 WASM
