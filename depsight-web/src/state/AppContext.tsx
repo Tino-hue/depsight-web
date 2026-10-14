@@ -43,14 +43,22 @@ const VALID_VIEWS: AppView[] = [
   "graph",
   "trends",
   "ecosystem",
+  "404",
 ];
 
-/** 从 #hash 解析初始视图（默认 hero 落地首页；#share= 视为 analyze） */
+/**
+ * 解析初始视图：
+ * - 非根路径（/foo，靠 Vercel SPA fallback 进入 index.html）→ 404
+ * - #share= 视为 analyze；合法视图 hash → 对应视图
+ * - 其余非法 hash → 404
+ */
 function viewFromHash(): AppView {
   if (typeof window === "undefined") return "hero";
+  if (!/^\/(index\.html)?$/.test(window.location.pathname)) return "404";
   const h = window.location.hash.replace("#", "");
+  if (h === "") return "hero";
   if (h.startsWith("share=")) return "analyze";
-  return (VALID_VIEWS as string[]).includes(h) ? (h as AppView) : "hero";
+  return (VALID_VIEWS as string[]).includes(h) ? (h as AppView) : "404";
 }
 
 function loadStoredTrends(): TrendMap {
@@ -159,6 +167,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (window.location.hash.startsWith("#share=")) {
       window.history.replaceState(null, "", "#analyze");
+    }
+    // 离开 404 视图时把非根路径重置回 /，避免 /foo#hero 这类脏 URL 刷新再次 404
+    if (view !== "404" && !/^\/(index\.html)?$/.test(window.location.pathname)) {
+      window.history.replaceState(null, "", "/");
     }
     const target = view === "hero" ? "#hero" : `#${view}`;
     if (window.location.hash !== target) {

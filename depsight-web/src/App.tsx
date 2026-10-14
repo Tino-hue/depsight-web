@@ -5,6 +5,7 @@ import { AiDrawer } from "@/components/AiDrawer";
 import { AnalyzeView } from "@/components/AnalyzeView";
 import { EcosystemView } from "@/components/EcosystemView";
 import { HeroView } from "@/components/HeroView";
+import { NotFoundView } from "@/components/NotFoundView";
 import { TrendsView } from "@/components/TrendsView";
 import ClickSpark from "@/components/ui/click-spark";
 import { useApp } from "@/state/AppContext";
@@ -20,6 +21,7 @@ const VIEW_TITLES: Record<string, string> = {
   graph: "Graph — depsight",
   trends: "Trends — depsight",
   ecosystem: "Ecosystem — depsight",
+  "404": "Not Found — depsight",
 };
 
 export default function App() {
@@ -47,8 +49,11 @@ export default function App() {
         {/* Hero：全屏落地页 */}
         {view === "hero" && <HeroView />}
 
+        {/* 404：非法 hash 或未知路径 */}
+        {view === "404" && <NotFoundView />}
+
         {/* 工作台：延迟挂载保状态，仅 active 显示；各视图自带 WorkbenchShell 外壳 */}
-        {view !== "hero" && (
+        {view !== "hero" && view !== "404" && (
           <>
             <div hidden={view !== "analyze"}>
               <AnalyzeView />
