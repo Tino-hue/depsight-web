@@ -133,6 +133,8 @@ export interface NodeMetaOutput {
 export interface AnalysisResult {
   overall_score: number;
   node_count: number;
+  /** v0.8.0-wasm 起：上下文解析告警（类型不符的 modules/metadata/options 字段等），位于 node_count 之后 */
+  parse_warnings?: string[];
   diagnostics: Diagnostic[];
   /** v0.7.0-wasm 起由引擎生成；JS fallback 同步输出 */
   suggestions: Suggestion[];

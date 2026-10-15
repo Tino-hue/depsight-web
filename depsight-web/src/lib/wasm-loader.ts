@@ -20,8 +20,8 @@ import type { WasmInitResult } from "./types";
 const EXPECTED_WASM_VERSION_PREFIX = "0.8.";
 /** context JSON 体积上限（UTF-8 字节） */
 const MAX_CONTEXT_JSON_BYTES = 8 * 1024 * 1024;
-/** 单 moon.mod 文本体积上限（UTF-8 字节） */
-const MAX_MOD_TEXT_BYTES = 1 * 1024 * 1024;
+/** 单 moon.mod 文本体积上限（UTF-8 字节）；上传入口与 WASM 入参共用同一上限 */
+export const MAX_MOD_TEXT_BYTES = 1 * 1024 * 1024;
 /** 连续失败熔断阈值 */
 const MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -40,6 +40,15 @@ interface WasmCompileOptions {
   importedStringConstants?: string;
 }
 
+/** WASM 被禁用时的监听器集合（熔断等运行时禁用需实时通知 UI 更新状态徽章） */
+const disableListeners = new Set<() => void>();
+
+/** 订阅 WASM 禁用事件，返回取消订阅函数 */
+export function onWasmDisabled(cb: () => void): () => void {
+  disableListeners.add(cb);
+  return () => disableListeners.delete(cb);
+}
+
 /** 禁用 WASM 并记录原因（后续调用走 JS fallback） */
 function disableWasm(reason: string): void {
   if (useWasm) {
@@ -47,6 +56,14 @@ function disableWasm(reason: string): void {
   }
   useWasm = false;
   lastError = reason;
+  // 通知订阅者（如 useWasm hook 把徽章切到 fallback）；单个回调异常不影响其他订阅者
+  for (const cb of disableListeners) {
+    try {
+      cb();
+    } catch (e) {
+      console.warn("[wasm-loader] onWasmDisabled listener error:", e);
+    }
+  }
 }
 
 /** UTF-8 字节长度（WASM String ABI 侧按 UTF-8 编码传递） */

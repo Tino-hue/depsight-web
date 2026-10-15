@@ -7,7 +7,7 @@ import {
   loadDemoEcosystem,
   loadDemoTrends,
 } from "./demo-data";
-import type { NodeMetaInput } from "./types";
+import type { AnalysisContext, NodeMetaInput } from "./types";
 
 const DIM_KEYS = [
   "freshness",
@@ -469,7 +469,7 @@ describe("诊断文案与 WASM 逐字对齐", () => {
             latest_version: "1.2.0",
             deprecated_apis: ["old_api"],
             total_api_count: 10,
-            self_size: 2_000_000,
+            self_size: 6_000_000,
             last_commit_days_ago: 400,
           },
         },
@@ -598,6 +598,21 @@ describe("import 解析健壮性（注释 / 多行块 / 旧版单行 / 空块）
     expect(r.node_metas[r.graph.root_id].license_source).toBe("mod_text");
   });
 
+  it('多行 import 块收尾行与依赖字符串同行（"b@2.0.0" }）不丢失', () => {
+    const r = runJsAnalyzer({
+      type: "mod_text",
+      mod_text: [
+        'name = "demo/app"',
+        'version = "1.0.0"',
+        "import {",
+        '  "a@1.0.0",',
+        '  "b@2.0.0" }',
+      ].join("\n"),
+    });
+    // root + a + b 均入图，收尾行依赖不得被静默丢弃
+    expect(r.graph.nodes.length).toBe(3);
+  });
+
   it("moon.mod.json：path 依赖跳过不崩溃", () => {
     const r = runJsAnalyzer({
       type: "mod_text",
@@ -702,9 +717,7 @@ describe("LICENSE 文本指纹（license_text → license + license_source）", 
     expect(r.node_metas["a@1.0.0"].license_source).toBe("fingerprint");
     const diag = r.diagnostics.find((d) => d.code === "LICENSE-002")!;
     expect(diag.severity).toBe("warning");
-    expect(diag.message).toBe(
-      "a uses GPL-3.0; beware of copyleft obligations",
-    );
+    expect(diag.message).toBe("a uses GPL-3.0; beware of copyleft obligations");
     // a=64.5→65（GPL 后 compliance=30），root=67 → overall=66
     expect(r.overall_score).toBe(66);
   });
@@ -781,5 +794,410 @@ describe("license_families 家族聚合视图", () => {
     expect(fam["strong-copyleft"]).toBe(1);
     expect(fam["proprietary"]).toBe(0);
     expect(fam["unknown"]).toBe(2);
+  });
+});
+
+// ===== P2 修复契约测试（M-1 ~ M-8，镜像 engine_test.mbt） =====
+
+describe("P2 M-1：license_families 统计口径与评分路径一致", () => {
+  it("变体许可证归一后计入正确家族", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtxA(
+        { "a@1.0.0": mkMod("a", "1.0.0") },
+        { "a@1.0.0": { license: "apache 2.0", latest_version: "1.0.0" } },
+      ),
+    });
+    // 评分路径归一为 Apache-2.0 → permissive 100；统计路径同口径
+    expect(
+      r.health_scores.find((s) => s.node_id === "a@1.0.0")!.compliance,
+    ).toBe(100);
+    expect(r.ecosystem_stats.license_families["permissive"]).toBe(1);
+    // root 自身无 license 亦计入 unknown，故恰为 1（统计口径与评分路径一致）
+    expect(r.ecosystem_stats.license_families["unknown"]).toBe(1);
+  });
+});
+
+describe("P2 M-2/M-7：键名边界与 module 引号头", () => {
+  it('namesuffix 不污染 name；module "q/r" 剥离引号', () => {
+    const r = runJsAnalyzer({
+      type: "mod_text",
+      mod_text: 'module "q/r"\nversion = "2.0.0"\nnamesuffix = "extra"\n',
+    });
+    expect(r.graph.root_id).toBe("q/r@2.0.0");
+  });
+});
+
+describe("P2 M-3：section 头重置 import 块", () => {
+  it("import 未闭合遇 [section] 重置，后续引号行不产生幽灵依赖", () => {
+    const r = runJsAnalyzer({
+      type: "mod_text",
+      mod_text:
+        'name = "demo/app"\nversion = "1.0.0"\n' +
+        'import {\n  "a@1.0.0"\n[profile.release]\nkey = "ghost/pkg@9.9.9"\n',
+    });
+    expect(r.graph.nodes.length).toBe(2);
+    expect(r.graph.nodes.some((n) => n.id === "ghost/pkg@9.9.9")).toBe(false);
+  });
+});
+
+describe("P2 M-4：版本号溢出", () => {
+  it("超宽版本号解析失败 → freshness 70 而非乱码分", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtxA(
+        { "a@1.0.0": mkMod("a", "1.0.0") },
+        {
+          "a@1.0.0": {
+            license: "MIT",
+            latest_version: "99999999999999999999.0.0",
+          },
+        },
+      ),
+    });
+    expect(
+      r.health_scores.find((s) => s.node_id === "a@1.0.0")!.freshness,
+    ).toBe(70);
+  });
+});
+
+describe("P2 M-5：传递体积菱形去重", () => {
+  it("共享子孙 d 在 root 传递体积中只计一次", () => {
+    const root = [
+      'name = "demo/app"',
+      'version = "1.0.0"',
+      'import { "b@1.0.0", "c@1.0.0" }',
+    ].join("\n");
+    const r = runJsAnalyzer({
+      type: "context",
+      context: {
+        root,
+        modules: {
+          "b@1.0.0": mkMod("b", "1.0.0", undefined, { "d@1.0.0": "1.0.0" }),
+          "c@1.0.0": mkMod("c", "1.0.0", undefined, { "d@1.0.0": "1.0.0" }),
+          "d@1.0.0": mkMod("d", "1.0.0"),
+        },
+        metadata: {
+          "d@1.0.0": {
+            license: "MIT",
+            latest_version: "1.0.0",
+            self_size: 1000,
+          },
+        },
+      },
+    });
+    const rootOff = r.size_offenders_top5.find(
+      (o) => o.node_id === "demo/app@1.0.0",
+    )!;
+    expect(rootOff.self_size).toBe(0);
+    expect(rootOff.transitive_size).toBe(1000);
+  });
+});
+
+describe("P2 M-6：SIZE-001 阈值与 size 分档对齐", () => {
+  const run = (self_size: number) =>
+    runJsAnalyzer({
+      type: "context",
+      context: makeCtxA(
+        { "a@1.0.0": mkMod("a", "1.0.0") },
+        {
+          "a@1.0.0": { license: "MIT", latest_version: "1.0.0", self_size },
+        },
+      ),
+    });
+  it("4MB 低于阈值静默", () => {
+    const r = run(4_000_000);
+    expect(r.diagnostics.some((d) => d.code === "SIZE-001")).toBe(false);
+    expect(r.suggestions.some((s) => s.code === "SIZE-001")).toBe(false);
+  });
+  it("5MB 边界触发诊断与建议", () => {
+    const r = run(5_000_000);
+    expect(r.diagnostics.some((d) => d.code === "SIZE-001")).toBe(true);
+    expect(r.suggestions.some((s) => s.code === "SIZE-001")).toBe(true);
+  });
+});
+
+describe("P2 M-8：同名依赖解析优先级", () => {
+  it("modules 命中优先，root.name 仅在未命中时回退", () => {
+    const root = [
+      'name = "demo/app"',
+      'version = "1.0.0"',
+      'import { "demo/app@0.9.0" }',
+    ].join("\n");
+    const r = runJsAnalyzer({
+      type: "context",
+      context: {
+        root,
+        modules: {
+          "demo/app@0.9.0": mkMod("demo/app", "0.9.0", undefined, {
+            "x@1.0.0": "1.0.0",
+          }),
+        },
+        metadata: {},
+      },
+    });
+    // root + demo/app@0.9.0 + x@1.0.0；若嫁接 root，x 不会出现（2 节点）
+    expect(r.graph.nodes.length).toBe(3);
+    expect(r.graph.nodes.some((n) => n.id === "x@1.0.0")).toBe(true);
+  });
+});
+
+// ===== P1 批次3（S10-S15）+ P3-M 契约测试（镜像 MoonBit 引擎 engine_test.mbt） =====
+
+describe("S10：UNLICENSED 计 proprietary（40 分）而非 permissive", () => {
+  it("入口先判 proprietary：compliance 40 + proprietary:1", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtxA(
+        { "a@1.0.0": mkMod("a", "1.0.0") },
+        { "a@1.0.0": { license: "UNLICENSED", latest_version: "1.0.0" } },
+      ),
+    });
+    const a = r.health_scores.find((s) => s.node_id === "a@1.0.0")!;
+    expect(a.compliance).toBe(40);
+    expect(r.ecosystem_stats.license_families.proprietary).toBe(1);
+  });
+});
+
+describe("S11：负值 metadata 归一（不扣减体积 / 不失真评分）", () => {
+  it("self_size 钳 0 / days 负 → null → activity 50 / api_count 钳 0 → deprecated 100", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtxA(
+        { "a@1.0.0": mkMod("a", "1.0.0") },
+        {
+          "a@1.0.0": {
+            license: "MIT",
+            latest_version: "1.0.0",
+            self_size: -500,
+            last_commit_days_ago: -10,
+            total_api_count: -5,
+          },
+        },
+      ),
+    });
+    expect(r.ecosystem_stats.total_size_bytes).toBe(0);
+    const a = r.health_scores.find((s) => s.node_id === "a@1.0.0")!;
+    expect(a.activity).toBe(50);
+    expect(a.deprecated_density).toBe(100);
+    // 输出侧 meta 同步归一（镜像 parse_node_meta 语义）
+    expect(r.node_metas["a@1.0.0"].self_size).toBe(0);
+    expect(r.node_metas["a@1.0.0"].last_commit_days_ago).toBeNull();
+    expect(r.node_metas["a@1.0.0"].total_api_count).toBe(0);
+  });
+});
+
+describe("S12：缺 name/version 的 mod 文本视为垃圾输入报错", () => {
+  it("TOML/JSON 双分支报错文案", () => {
+    const tomlOut = runJsAnalyzer({
+      type: "mod_text",
+      mod_text: 'name = "a/b"\n',
+    });
+    expect(tomlOut.error).toContain(
+      "moon.mod missing required field 'name' or 'version'",
+    );
+    const jsonOut = runJsAnalyzer({
+      type: "mod_text",
+      mod_text: '{"name":"x/y"}',
+    });
+    expect(jsonOut.error).toContain(
+      "moon.mod.json missing required field 'name' or 'version'",
+    );
+  });
+
+  it("连带：context 中垃圾模块内容不产生 unknown@0.0.0 幽灵节点", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtxA({ "a@1.0.0": "not a mod at all" }, {}),
+    });
+    expect(r.graph.nodes.some((n) => n.id === "unknown@0.0.0")).toBe(false);
+  });
+});
+
+describe("S13：领先版本不告警不建议升级（freshness 90）", () => {
+  it("cur(2.0.0) >= latest(1.0.0) → 90 分、无 OUTDATED-001", () => {
+    const root = [
+      'name = "demo/app"',
+      'version = "1.0.0"',
+      'import { "a@2.0.0" }',
+    ].join("\n");
+    const r = runJsAnalyzer({
+      type: "context",
+      context: {
+        root,
+        modules: { "a@2.0.0": mkMod("a", "2.0.0") },
+        metadata: {
+          "a@2.0.0": { license: "MIT", latest_version: "1.0.0" },
+        },
+      },
+    });
+    const a = r.health_scores.find((s) => s.node_id === "a@2.0.0")!;
+    expect(a.freshness).toBe(90);
+    expect(r.diagnostics.some((d) => d.code === "OUTDATED-001")).toBe(false);
+    expect(r.suggestions.some((s) => s.code === "OUTDATED-001")).toBe(false);
+  });
+});
+
+describe("S14：SPDX 表达式合规分（AND 取最差 / 括号递归 / 小写连接词）", () => {
+  const scoreOf = (license: string) => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtxA(
+        { "a@1.0.0": mkMod("a", "1.0.0") },
+        { "a@1.0.0": { license, latest_version: "1.0.0" } },
+      ),
+    });
+    return r.health_scores.find((s) => s.node_id === "a@1.0.0")!.compliance;
+  };
+  it("AND 取最差 / 括号递归 / 小写 or / 悬挂括号保守 fallback", () => {
+    // AND 取最差：min(100, 30) = 30
+    expect(scoreOf("MIT and GPL-3.0")).toBe(30);
+    // 括号递归：AND 拆出 (MIT OR Apache-2.0) → min(30, max(100,100)) = 30
+    expect(scoreOf("GPL-3.0 AND (MIT OR Apache-2.0)")).toBe(30);
+    // 小写连接词 + 变体：max(100, 30) = 100
+    expect(scoreOf("mit or gplv3")).toBe(100);
+    // 悬挂括号 → 不平衡保守 fallback：single(GPL-3.0) = 30
+    expect(scoreOf("(GPL-3.0")).toBe(30);
+  });
+});
+
+describe("S15：options.max_depth 钳制 [1,64]", () => {
+  const chainCtx = (maxDepth: unknown): AnalysisContext =>
+    ({
+      root: [
+        'name = "demo/app"',
+        'version = "1.0.0"',
+        'import { "a@1.0.0" }',
+      ].join("\n"),
+      modules: {
+        "a@1.0.0": mkMod("a", "1.0.0", undefined, { "b@1.0.0": "1.0.0" }),
+        "b@1.0.0": mkMod("b", "1.0.0", undefined, { "c@1.0.0": "1.0.0" }),
+        "c@1.0.0": mkMod("c", "1.0.0"),
+      },
+      metadata: {},
+      options: { max_depth: maxDepth },
+    }) as AnalysisContext;
+  it("1 → 2 节点；0 钳到 1 → 2 节点；999999 钳到 64 → 4 节点", () => {
+    expect(
+      runJsAnalyzer({ type: "context", context: chainCtx(1) }).node_count,
+    ).toBe(2);
+    expect(
+      runJsAnalyzer({ type: "context", context: chainCtx(0) }).node_count,
+    ).toBe(2);
+    expect(
+      runJsAnalyzer({ type: "context", context: chainCtx(999999) }).node_count,
+    ).toBe(4);
+  });
+});
+
+describe("S15：context JSON 超 16MB 硬上限直接报错", () => {
+  it("步骤 0 拒绝，不进入解析", () => {
+    const bigRoot = "a".repeat(17 * 1024 * 1024);
+    const r = runJsAnalyzer({
+      type: "context",
+      context: { root: bigRoot, modules: {}, metadata: {} },
+    });
+    expect(r.error).toContain("context JSON exceeds 16MB size limit");
+  });
+});
+
+describe("S15：自环依赖检出 CYCLE-001（迭代 DFS 与递归版同语义）", () => {
+  it("a→a 自环：node_count 2 + cycle 诊断文案", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtxA(
+        {
+          "a@1.0.0": mkMod("a", "1.0.0", undefined, { "a@1.0.0": "1.0.0" }),
+        },
+        {},
+      ),
+    });
+    expect(r.node_count).toBe(2);
+    expect(r.diagnostics.some((d) => d.code === "CYCLE-001")).toBe(true);
+    expect(
+      r.diagnostics.some(
+        (d) => d.message === "dependency cycle detected: a@1.0.0 -> a@1.0.0",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("parse_warnings：异常字段类型收集 warning 而非静默吞噬", () => {
+  it("modules/metadata/options 非对象逐字告警", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: {
+        root: makeCtxA({}, {}).root,
+        modules: [] as unknown as Record<string, string>,
+        metadata: "oops" as unknown as Record<string, NodeMetaInput>,
+        options: "oops" as unknown as { max_depth?: number },
+      },
+    });
+    expect(r.parse_warnings).toContain(
+      "context.modules is not an object; ignored",
+    );
+    expect(r.parse_warnings).toContain(
+      "context.metadata is not an object; ignored",
+    );
+    expect(r.parse_warnings).toContain(
+      "context.options is not an object; ignored",
+    );
+  });
+});
+
+describe("parse_warnings：modules 非字符串值跳过并告警；max_depth 非数字回退默认", () => {
+  it("逐字告警 + 分析不中断", () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: {
+        root: makeCtxA({}, {}).root,
+        modules: { "a@1.0.0": 123 } as unknown as Record<string, string>,
+        metadata: {},
+        options: { max_depth: "x" } as unknown as { max_depth?: number },
+      },
+    });
+    // JS 侧 parse_warnings 为原始字符串数组（WASM 侧 JSON 序列化后引号转义为 \"）
+    expect(r.parse_warnings).toContain(
+      'modules["a@1.0.0"] is not a string; skipped',
+    );
+    expect(r.parse_warnings).toContain(
+      "options.max_depth is not a number; using default",
+    );
+  });
+});
+
+describe("P3-M③：统计口径与评分一致（变体许可证归一后去重计数）", () => {
+  it('"apache 2.0"/"Apache-2.0" 归一后 unique 1、permissive 2', () => {
+    const r = runJsAnalyzer({
+      type: "context",
+      context: makeCtx(
+        {
+          "a@1.0.0": mkMod("a", "1.0.0"),
+          "b@2.0.0": mkMod("b", "2.0.0"),
+        },
+        {
+          "a@1.0.0": { license: "apache 2.0", latest_version: "1.0.0" },
+          "b@2.0.0": { license: "Apache-2.0", latest_version: "2.0.0" },
+        },
+      ),
+    });
+    expect(r.ecosystem_stats.unique_licenses).toBe(1);
+    expect(r.ecosystem_stats.license_families.permissive).toBe(2);
+  });
+});
+
+describe("P3-M⑤：version_resolved 判定大小写不敏感（Latest 视为未解析）", () => {
+  it('"Latest" → version_resolved false', () => {
+    // 镜像 engine_test.mbt context_json("\"a@latest\", …)：root import 与 modules 同 key
+    const r = runJsAnalyzer({
+      type: "context",
+      context: {
+        root: 'name = "demo/app"\nversion = "1.0.0"\nimport { "a@latest" }\n',
+        modules: { "a@latest": mkMod("a", "Latest") },
+        metadata: {},
+      },
+    });
+    const a = r.graph.nodes.find((n) => n.id === "a@latest")!;
+    expect(a.version_resolved).toBe(false);
   });
 });

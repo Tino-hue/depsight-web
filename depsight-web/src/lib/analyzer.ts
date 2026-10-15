@@ -39,12 +39,20 @@ export function parseMod(text: string): ParsedMod {
 function parseModJson(text: string): ParsedMod {
   try {
     const obj = JSON.parse(text) as Record<string, unknown>;
-    return {
-      name: (obj.name as string) || "unknown",
-      version: (obj.version as string) || "0.0.0",
+    const name = (obj.name as string) || "unknown";
+    const version = (obj.version as string) || "0.0.0";
+    const result: ParsedMod = {
+      name,
+      version,
       license: (obj.license as string) || null,
       deps: normalizeDeps((obj.deps as Record<string, unknown>) || {}),
     };
+    // S12：缺 name/version 视为垃圾输入，标记 parse_error 而非静默产出 unknown@0.0.0
+    if (name === "unknown" || version === "0.0.0") {
+      result.parse_error =
+        "moon.mod.json missing required field 'name' or 'version'";
+    }
+    return result;
   } catch (e) {
     return {
       name: "unknown",
@@ -69,15 +77,34 @@ function parseModToml(text: string): ParsedMod {
   for (const raw of lines) {
     const line = stripTomlComment(raw).trim();
     if (!line) continue;
+    // 普通 section 头意味着 import 块已意外收尾，后续带引号的行是别的字段，不当依赖
+    if (inImport && line.startsWith("[")) inImport = false;
 
-    if (line.startsWith("name") && line.includes("=")) {
+    // 键名须以空白或 = 结尾，避免 name 误命中 namesuffix、version 误命中 versioning
+    const keyEnd = (kw: string) =>
+      line.length === kw.length ||
+      line[kw.length] === " " ||
+      line[kw.length] === "=";
+    if (line.startsWith("name") && keyEnd("name") && line.includes("=")) {
       result.name = stripQuotes(tomlValue(line));
-    } else if (line.startsWith("module") && !line.includes("=")) {
-      // 头部行：`module my/app`（等价于 name = "my/app"）
-      result.name = line.substring("module".length).trim();
-    } else if (line.startsWith("version") && line.includes("=")) {
+    } else if (
+      line.startsWith("module") &&
+      keyEnd("module") &&
+      !line.includes("=")
+    ) {
+      // 头部行：`module my/app` 或带引号 `module "my/app"`（等价于 name = "my/app"）
+      result.name = stripQuotes(line.substring("module".length).trim());
+    } else if (
+      line.startsWith("version") &&
+      keyEnd("version") &&
+      line.includes("=")
+    ) {
       result.version = stripQuotes(tomlValue(line));
-    } else if (line.startsWith("license") && line.includes("=")) {
+    } else if (
+      line.startsWith("license") &&
+      keyEnd("license") &&
+      line.includes("=")
+    ) {
       result.license = stripQuotes(tomlValue(line));
     } else if (line.startsWith("import")) {
       if (line.includes("{")) {
@@ -99,18 +126,22 @@ function parseModToml(text: string): ParsedMod {
           }
         }
       }
-    } else if (inImport && line.includes("}")) {
-      // 多行 import 块的收尾行（无字符串）
-      inImport = false;
     } else if (inImport && line.includes('"')) {
-      // 多行 import 里的字符串
+      // 多行 import 里的字符串（收尾行 `"b@2.0.0" }` 字符串与 } 同行，须先提取再收尾）
       const depStr = extractQuoted(line);
       if (depStr !== null) {
         const { name, version } = splitDepName(depStr);
         result.deps[name] = version;
       }
       if (line.includes("}")) inImport = false;
+    } else if (inImport && line.includes("}")) {
+      // 多行 import 块的收尾行（无字符串）
+      inImport = false;
     }
+  }
+  // S12：缺 name/version 视为垃圾输入，标记 parse_error 而非静默产出 unknown@0.0.0
+  if (result.name === "unknown" || result.version === "0.0.0") {
+    result.parse_error = "moon.mod missing required field 'name' or 'version'";
   }
   return result;
 }
@@ -204,6 +235,11 @@ function stripQuotes(s: string): string {
 
 // ===== 图构建 =====
 
+/** version_resolved 判定：trim + 小写后不等于 "latest"（大小写不敏感，与 serialize.mbt is_resolved_version 一致；P3-M⑤） */
+function isResolvedVersion(version: string): boolean {
+  return version.trim().toLowerCase() !== "latest";
+}
+
 /** BFS 构建依赖图 */
 function buildGraph(
   rootMod: ParsedMod,
@@ -225,7 +261,7 @@ function buildGraph(
         id,
         name,
         version,
-        version_resolved: version !== "latest",
+        version_resolved: isResolvedVersion(version),
         depth,
       });
     }
@@ -237,12 +273,17 @@ function buildGraph(
   }
 
   function resolveModule(name: string, version: string): ParsedMod | null {
-    // 根节点
-    if (name === rootMod.name) return rootMod;
     const key = makeId(name, version);
     const content = modules[key];
-    if (!content) return null;
-    return parseMod(content);
+    if (content !== undefined) {
+      const mod = parseMod(content);
+      // S12 连带：垃圾模块内容（缺 name/version）视为不可解析，
+      // 与 graph.mbt resolve_module 的 Err => None 一致，不产出 unknown@0.0.0 幽灵节点
+      return mod.parse_error ? null : mod;
+    }
+    // modules 未命中才回退根节点，避免同名依赖被嫁接到 root 子树（与 graph.mbt 同步）
+    if (name === rootMod.name) return rootMod;
+    return null;
   }
 
   const rootId = addNode(rootMod.name, rootMod.version, 0);
@@ -298,12 +339,17 @@ function findCycles(graph: DepGraph): string[][] {
   const seen = new Set<string>();
   const stack: string[] = [];
 
-  function dfs(id: string): void {
-    color.set(id, 1);
-    stack.push(id);
-    const nexts = adj.get(id);
-    if (nexts) {
-      for (const next of nexts) {
+  // 迭代式 DFS（显式调用栈）：深层依赖图下递归会爆栈，三色标记逻辑与递归版一致（S15）
+  function dfsIter(start: string): void {
+    const frames: Array<[string, number]> = [[start, 0]]; // (节点, 下一个待处理孩子下标)
+    color.set(start, 1);
+    stack.push(start);
+    while (frames.length > 0) {
+      const [id, idx] = frames[frames.length - 1];
+      const nexts = adj.get(id) || [];
+      if (idx < nexts.length) {
+        frames[frames.length - 1] = [id, idx + 1];
+        const next = nexts[idx];
         const c = color.get(next);
         if (c === 1) {
           // 回边：从栈中重建环路径（去重后记录）
@@ -321,17 +367,22 @@ function findCycles(graph: DepGraph): string[][] {
         } else if (c === 2) {
           // 已完成，跳过
         } else {
-          dfs(next);
+          color.set(next, 1);
+          stack.push(next);
+          frames.push([next, 0]);
         }
+      } else {
+        // 孩子处理完毕：弹出帧与栈，标记完成
+        frames.pop();
+        stack.pop();
+        color.set(id, 2);
       }
     }
-    stack.pop();
-    color.set(id, 2);
   }
 
   // 从所有未访问节点出发（正常情况下 root 可达全部节点）
   for (const node of graph.nodes) {
-    if (!color.has(node.id)) dfs(node.id);
+    if (!color.has(node.id)) dfsIter(node.id);
   }
 
   return cycles;
@@ -347,6 +398,15 @@ const WEIGHTS = {
   size: 0.2,
   activity: 0.1,
 } as const;
+
+// 与 MoonBit model.mbt 常量一一对齐（S15 / P3-M）
+const DEFAULT_MAX_DEPTH = 10;
+const MAX_DEPTH_HARD_LIMIT = 64;
+const MAX_CONTEXT_BYTES = 16 * 1024 * 1024;
+const TOP_OFFENDERS_N = 5;
+const SIZE_WARN_THRESHOLD_BYTES = 5_000_000;
+const ACTIVITY_STALE_DAYS = 365;
+const ACTIVITY_WARN_DAYS = 180;
 
 interface VersionParts {
   major: number;
@@ -373,7 +433,9 @@ function parseVersion(v: string): VersionParts | null {
   for (const p of parts) {
     const s = p.trim();
     if (!/^\d+$/.test(s)) return null;
-    nums.push(parseInt(s, 10));
+    const n = parseInt(s, 10);
+    if (!Number.isSafeInteger(n)) return null; // 溢出与 MoonBit parse_uint 的 None 分支对齐
+    nums.push(n);
   }
   while (nums.length < 3) nums.push(0);
   return { major: nums[0], minor: nums[1], patch: nums[2] };
@@ -390,7 +452,8 @@ function scoreFreshness(mod: ParsedMod, meta: NodeMetaInput): number {
   if (!cur || !latest) return 70;
   if (cur.major < latest.major) return 20; // 跨大版本，严重过时
   if (cur.minor < latest.minor) {
-    const gap = latest.minor - cur.minor;
+    // gap 饱和到 4：4×15=60 无溢出风险，且各档位与旧行为一致（gap=4 时 80-60=20→钳 30）
+    const gap = Math.min(4, latest.minor - cur.minor);
     return Math.max(30, 80 - gap * 15);
   }
   return 90;
@@ -404,6 +467,15 @@ function scoreFreshness(mod: ParsedMod, meta: NodeMetaInput): number {
  * 与 MoonBit scoring.mbt license_family 一致。
  */
 function licenseFamily(upper: string): string {
+  // 入口先判 proprietary：UNLICENSED/PROPRIETARY/COMMERCIAL/SSPL 必须在 permissive 的
+  // "UNLICENSE" 子串之前拦截，否则 UNLICENSED 会被误判 permissive（S10）
+  if (
+    upper.includes("UNLICENSED") ||
+    upper.includes("PROPRIETARY") ||
+    upper.includes("COMMERCIAL") ||
+    upper.includes("SSPL")
+  )
+    return "proprietary";
   const permissive = [
     "MIT",
     "MIT-0",
@@ -421,12 +493,6 @@ function licenseFamily(upper: string): string {
   const weak = ["LGPL", "MPL", "EPL", "EUPL", "CDDL", "CPL"];
   if (weak.some((w) => upper.includes(w))) return "weak-copyleft";
   if (upper.includes("GPL") || upper.includes("AGPL")) return "strong-copyleft";
-  if (
-    upper.includes("PROPRIETARY") ||
-    upper.includes("COMMERCIAL") ||
-    upper.includes("SSPL")
-  )
-    return "proprietary";
   return "unknown";
 }
 
@@ -649,35 +715,165 @@ function cleanLicenseToken(s: string): string {
   return c;
 }
 
-/** OR 分支拆分（同时兼容 "MIT/Apache-2.0" 双许可证简写） */
-function splitLicenseOr(expr: string): string[] {
-  const out: string[] = [];
-  for (const seg of expr.split("/")) {
-    for (const part of seg.split(" OR ")) out.push(cleanLicenseToken(part));
+/** 括号平衡检查（与 MoonBit license_paren_balanced 一致） */
+function licenseParenBalanced(s: string): boolean {
+  let depth = 0;
+  for (const c of s) {
+    if (c === "(") depth += 1;
+    else if (c === ")") {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
   }
-  return out;
-}
-
-/** AND 分支拆分 */
-function splitLicenseAnd(expr: string): string[] {
-  return expr.split(" AND ").map(cleanLicenseToken);
+  return depth === 0;
 }
 
 /**
- * SPDX 许可证表达式评分：OR 取最优分支，AND 取最差分支。
- * 与 MoonBit license_expr_score 一致。
+ * 剥掉整体包裹的最外层括号对：仅当首个 '(' 的配对 ')' 之后只剩空白才算整体包裹
+ *（如 "(MIT OR Apache-2.0)" → "MIT OR Apache-2.0"；"((a))" 循环剥至 "a"）。
+ * 配对失败或后面还有内容则原样返回。与 MoonBit strip_outer_parens 一致。
+ */
+function stripOuterParens(s: string): string {
+  let t = s.trim();
+  while (t.startsWith("(")) {
+    const n = t.length;
+    let depth = 0;
+    let close = -1;
+    for (let i = 0; i < n; i++) {
+      const c = t[i];
+      if (c === "(") depth += 1;
+      else if (c === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          close = i;
+          break;
+        }
+      }
+    }
+    if (close < 0) break;
+    // 配对 ')' 后必须只剩空白，否则不是整体包裹（如 "(a) (b)"）
+    if (t.slice(close + 1).trim() === "") {
+      t = t.slice(1, close).trim();
+    } else {
+      break;
+    }
+  }
+  return t;
+}
+
+/**
+ * 在 s 的 i 位置尝试匹配小写连接词 conn（前后需为操作数边界：前为空白/起始，后为空白）。
+ * 避免 "andromeda"/"andr" 误判。与 MoonBit license_match_conn 一致。
+ */
+function licenseMatchConn(s: string, i: number, conn: string): boolean {
+  const clen = conn.length;
+  if (i + clen > s.length) return false;
+  // 前缀必须为空格或起始
+  if (i > 0) {
+    const prev = s[i - 1];
+    if (prev !== " " && prev !== "\t") return false;
+  }
+  // 逐字符小写比较
+  for (let k = 0; k < clen; k++) {
+    if (s[i + k].toLowerCase() !== conn[k]) return false;
+  }
+  // 后缀必须为空白（连接词后须跟操作数）
+  const after = i + clen;
+  if (after >= s.length) return false;
+  const next = s[after];
+  return next === " " || next === "\t";
+}
+
+/**
+ * 自顶向下按连接词拆分（跳过括号内部，大小写不敏感，操作数含空白才算连接词）。
+ * 返回 null 表示无该连接词。兼容 "MIT/Apache-2.0" 双许可证简写（视作 OR）。
+ * 与 MoonBit split_license_top 一致。
+ */
+function splitLicenseTop(expr: string, conn: "or" | "and"): string[] | null {
+  const s = expr.trim();
+  const parts: string[] = [];
+  let cur = "";
+  let depth = 0;
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    const c = s[i];
+    if (c === "(") {
+      depth += 1;
+      cur += "(";
+      i += 1;
+    } else if (c === ")") {
+      depth -= 1;
+      cur += ")";
+      i += 1;
+    } else if (depth === 0 && licenseMatchConn(s, i, conn)) {
+      parts.push(cur);
+      cur = "";
+      i += conn.length;
+    } else {
+      cur += c;
+      i += 1;
+    }
+  }
+  if (parts.length === 0) return null;
+  // 末尾操作数
+  parts.push(cur);
+  // 兼容 "MIT/Apache-2.0" 双许可证简写：OR 分支按 "/" 再切
+  if (conn === "or") {
+    const expanded: string[] = [];
+    for (const p of parts) {
+      for (const seg of p.split("/")) {
+        expanded.push(seg.trim());
+      }
+    }
+    return expanded;
+  }
+  return parts;
+}
+
+/**
+ * SPDX 许可证表达式评分：大小写不敏感 + 括号递归解析。
+ * 括号平衡 → 自顶向下按 OR / AND 切分（括号块作整体 token）；
+ * 不平衡/无连接词 → 保守 fallback 为单个 token（cleanLicenseToken 剥括号），
+ * 无法解析的表达式计 50（unknown 中位分）。与 MoonBit license_expr_score 一致。
  */
 function licenseExprScore(expr: string): number {
-  let best = 0;
-  for (const p of splitLicenseOr(expr)) {
+  return licenseExprScoreInner(expr.trim());
+}
+
+function licenseExprScoreInner(expr: string): number {
+  const t0 = expr.trim();
+  if (t0 === "") return 50;
+  // 整体被括号包裹时先剥外层（如 "(MIT OR Apache-2.0)"），内层连接词才能升到顶层拆分
+  const t = stripOuterParens(t0);
+  // 括号不平衡 → 保守 fallback 为单个 token
+  if (!licenseParenBalanced(t)) return singleLicenseScore(cleanLicenseToken(t));
+
+  // 自顶向下按 OR 拆分（括号保护），OR 命中则各分支取最优
+  const orParts = splitLicenseTop(t, "or");
+  if (orParts) {
+    let best = 0;
+    for (const p of orParts) {
+      const s = licenseAndScore(p);
+      if (s > best) best = s;
+    }
+    return best;
+  }
+  return licenseAndScore(t);
+}
+
+/** AND 组合：取各分支最差（合规义务叠加），与 MoonBit license_and_score 一致 */
+function licenseAndScore(expr: string): number {
+  const andParts = splitLicenseTop(expr.trim(), "and");
+  if (andParts) {
     let worst = 100;
-    for (const q of splitLicenseAnd(p)) {
-      const s = singleLicenseScore(q);
+    for (const p of andParts) {
+      const s = licenseExprScoreInner(p);
       if (s < worst) worst = s;
     }
-    if (worst > best) best = worst;
+    return worst;
   }
-  return best === 0 ? 50 : best;
+  return singleLicenseScore(cleanLicenseToken(expr.trim()));
 }
 
 function scoreCompliance(meta: NodeMetaInput): number {
@@ -730,13 +926,15 @@ function computeHealthScore(node: GraphNode, meta: NodeMetaInput): HealthScore {
   const size = scoreSize(meta);
   const activity = scoreActivity(meta);
 
-  const total = Math.round(
+  const rawTotal = Math.round(
     freshness * WEIGHTS.freshness +
       compliance * WEIGHTS.compliance +
       deprecated * WEIGHTS.deprecated +
       size * WEIGHTS.size +
       activity * WEIGHTS.activity,
   );
+  // 入户口径统一钳制：坏数据下总分稳定落在 [0,100]（S11，镜像 scoring.mbt）
+  const total = Math.max(0, Math.min(100, rawTotal));
 
   return {
     node_id: node.id,
@@ -804,6 +1002,24 @@ function newestNode(nodes: GraphNode[]): GraphNode {
   return newest;
 }
 
+/// 版本三元组比较（镜像 MoonBit version_compare）
+function versionCompare(a: VersionParts, b: VersionParts): number {
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+
+/**
+ * 判向 outdated 检查（S13）：仅当两版本均可解析且 cur < latest 才算落后。
+ * 领先版本（cur >= latest）不告警、不建议升级，避免 "降级式升级" 误导。
+ */
+function isOutdated(current: string, latest: string): boolean {
+  const cur = parseVersion(current);
+  const lat = parseVersion(latest);
+  if (!cur || !lat) return false;
+  return versionCompare(cur, lat) < 0;
+}
+
 function diagnose(
   graph: DepGraph,
   metas: Record<string, NodeMetaInput>,
@@ -820,8 +1036,8 @@ function diagnose(
       diags.push(makeDiagnostic("YANKED-001", "critical", node.id, msg));
     }
 
-    // OUTDATED-001
-    if (meta.latest_version && node.version !== meta.latest_version) {
+    // OUTDATED-001（S13：仅落后才告警，领先/持平不告警）
+    if (meta.latest_version && isOutdated(node.version, meta.latest_version)) {
       diags.push(
         makeDiagnostic(
           "OUTDATED-001",
@@ -868,7 +1084,7 @@ function diagnose(
 
     // SIZE-001
     const size = meta.self_size || 0;
-    if (size > 1_000_000) {
+    if (size >= SIZE_WARN_THRESHOLD_BYTES) {
       diags.push(
         makeDiagnostic(
           "SIZE-001",
@@ -881,7 +1097,7 @@ function diagnose(
 
     // ACTIVITY-001 / ACTIVITY-002
     const days = meta.last_commit_days_ago;
-    if (days != null && days > 365) {
+    if (days != null && days > ACTIVITY_STALE_DAYS) {
       diags.push(
         makeDiagnostic(
           "ACTIVITY-001",
@@ -890,7 +1106,7 @@ function diagnose(
           `${node.name} has not been updated in ${days} days and may be unmaintained`,
         ),
       );
-    } else if (days != null && days > 180) {
+    } else if (days != null && days > ACTIVITY_WARN_DAYS) {
       diags.push(
         makeDiagnostic(
           "ACTIVITY-002",
@@ -974,8 +1190,8 @@ function buildSuggestions(
       });
     }
 
-    // OUTDATED-001（major→high / minor→medium / 其余→low）
-    if (meta.latest_version && node.version !== meta.latest_version) {
+    // OUTDATED-001（major→high / minor→medium / 其余→low；S13：仅落后才建议升级）
+    if (meta.latest_version && isOutdated(node.version, meta.latest_version)) {
       const cur = parseVersion(node.version);
       const latest = parseVersion(meta.latest_version);
       let impact: Suggestion["impact"];
@@ -1022,7 +1238,10 @@ function buildSuggestions(
     }
 
     // ACTIVITY-001
-    if (meta.last_commit_days_ago != null && meta.last_commit_days_ago > 365) {
+    if (
+      meta.last_commit_days_ago != null &&
+      meta.last_commit_days_ago > ACTIVITY_STALE_DAYS
+    ) {
       sugs.push({
         code: "ACTIVITY-001",
         node_id: node.id,
@@ -1050,7 +1269,7 @@ function buildSuggestions(
     }
 
     // SIZE-001
-    if ((meta.self_size || 0) > 1_000_000) {
+    if ((meta.self_size || 0) >= SIZE_WARN_THRESHOLD_BYTES) {
       sugs.push({
         code: "SIZE-001",
         node_id: node.id,
@@ -1106,6 +1325,8 @@ function buildSuggestions(
 }
 
 export function fmtBytes(n: number): string {
+  // S11 防御：非有限值/负值一律按 0 展示，避免 NaN/负数体积文本
+  if (!Number.isFinite(n) || n < 0) return "0 B";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
@@ -1142,13 +1363,22 @@ function computeTransitiveSize(
     return total;
   }
 
-  return graph.nodes
-    .map((n) => ({
-      node_id: n.id,
-      self_size: (metas[n.id] || {}).self_size || 0,
-      transitive_size: transitiveSize(n.id),
-    }))
-    .sort((a, b) => b.transitive_size - a.transitive_size);
+  return (
+    graph.nodes
+      .map((n) => ({
+        node_id: n.id,
+        self_size: (metas[n.id] || {}).self_size || 0,
+        transitive_size: transitiveSize(n.id),
+      }))
+      // 三向比较降序（与 size.mbt sort_by 一致，避免减法比较歧义）
+      .sort((a, b) =>
+        a.transitive_size > b.transitive_size
+          ? -1
+          : a.transitive_size < b.transitive_size
+            ? 1
+            : 0,
+      )
+  );
 }
 
 // ===== 生态统计 =====
@@ -1175,11 +1405,14 @@ function computeEcosystemStats(
     const meta = metas[node.id] || {};
     let family = "unknown";
     if (meta.license) {
-      uniqueLicenses.add(meta.license);
-      family = licenseFamily(meta.license.toUpperCase());
+      // P3-M③：先归一化 token 再计数，"MIT"/" mit " 不重复计入 unique_licenses
+      const normalized = normalizeLicenseToken(meta.license).toUpperCase();
+      uniqueLicenses.add(normalized);
+      family = licenseFamily(normalized);
     }
     licenseFamilies[family] += 1;
-    totalSize += meta.self_size || 0;
+    // S11 防御层：负值/缺失 self_size 按 0 计入总量（镜像 stats.mbt）
+    totalSize += meta.self_size != null && meta.self_size > 0 ? meta.self_size : 0;
     totalDeprecated += (meta.deprecated_apis || []).length;
   }
 
@@ -1248,7 +1481,10 @@ function analyzeSingleMod(modText: string): AnalysisResult {
   );
   const diags = diagnose(graph, metas);
   const suggestions = buildSuggestions(graph, metas);
-  const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5);
+  const sizeOffenders = computeTransitiveSize(graph, metas).slice(
+    0,
+    TOP_OFFENDERS_N,
+  );
   const stats = computeEcosystemStats(
     graph,
     healthScores,
@@ -1256,6 +1492,7 @@ function analyzeSingleMod(modText: string): AnalysisResult {
     graph.root_id,
   );
 
+  // analyzeSingleMod 无上下文解析阶段：parse_warnings 恒为空数组（镜像 api.mbt）
   return assembleResult(
     graph,
     rootMod,
@@ -1265,10 +1502,35 @@ function analyzeSingleMod(modText: string): AnalysisResult {
     sizeOffenders,
     stats,
     metas,
+    [],
   );
 }
 
+/**
+ * S11：归一负值 metadata（镜像 meta.mbt parse_node_meta）。
+ * last_commit_days_ago 负值视为未知（null）；self_size/total_api_count 负值按 0。
+ */
+function normalizeMetaInput(meta: NodeMetaInput): NodeMetaInput {
+  const out: NodeMetaInput = { ...meta };
+  if (out.last_commit_days_ago != null && out.last_commit_days_ago < 0) {
+    out.last_commit_days_ago = null;
+  }
+  if (out.self_size != null && out.self_size < 0) {
+    out.self_size = 0;
+  }
+  if (out.total_api_count != null && out.total_api_count < 0) {
+    out.total_api_count = 0;
+  }
+  return out;
+}
+
 function analyzeContext(ctx: AnalysisContext): AnalysisResult {
+  // S15 步骤 0：context JSON 16MB 硬上限（与 WASM api.mbt 步骤 0 一致）
+  if (JSON.stringify(ctx).length > MAX_CONTEXT_BYTES) {
+    return {
+      error: "context JSON exceeds 16MB size limit",
+    } as AnalysisResult;
+  }
   if (!ctx.root)
     return { error: "missing required field 'root'" } as AnalysisResult;
   const rootMod = parseMod(ctx.root);
@@ -1278,18 +1540,70 @@ function analyzeContext(ctx: AnalysisContext): AnalysisResult {
     } as AnalysisResult;
   }
 
-  const modules = ctx.modules || {};
-  const metadata = ctx.metadata || {};
-  const maxDepth = (ctx.options && ctx.options.max_depth) || 10;
+  // S15：类型不符的 modules/metadata/options 字段收集为 parse_warnings
+  // （与 WASM api.mbt 逐字一致），不中断分析；max_depth 取整后钳制到 [1,64]
+  const parseWarnings: string[] = [];
+
+  const rawModules = ctx.modules;
+  const modules: Record<string, string> = {};
+  if (rawModules != null) {
+    if (typeof rawModules === "object" && !Array.isArray(rawModules)) {
+      for (const [key, value] of Object.entries(rawModules)) {
+        if (typeof value === "string") {
+          modules[key] = value;
+        } else {
+          parseWarnings.push(`modules["${key}"] is not a string; skipped`);
+        }
+      }
+    } else {
+      parseWarnings.push("context.modules is not an object; ignored");
+    }
+  }
+
+  const rawMetadata = ctx.metadata;
+  const metadata: Record<string, NodeMetaInput> = {};
+  if (rawMetadata != null) {
+    if (typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
+      Object.assign(metadata, rawMetadata);
+    } else {
+      parseWarnings.push("context.metadata is not an object; ignored");
+    }
+  }
+
+  let maxDepth = DEFAULT_MAX_DEPTH;
+  const rawOptions = ctx.options;
+  if (rawOptions != null) {
+    if (typeof rawOptions === "object" && !Array.isArray(rawOptions)) {
+      const md = rawOptions.max_depth;
+      if (md != null) {
+        if (typeof md === "number" && Number.isFinite(md)) {
+          maxDepth = Math.max(
+            1,
+            Math.min(MAX_DEPTH_HARD_LIMIT, Math.trunc(md)),
+          );
+        } else {
+          parseWarnings.push(
+            "options.max_depth is not a number; using default",
+          );
+        }
+      }
+    } else {
+      parseWarnings.push("context.options is not an object; ignored");
+    }
+  }
 
   const graph = buildGraph(rootMod, modules, maxDepth);
 
-  // 构建 metas（与 WASM build_node_metas 一致：metadata 优先；
-  // license 缺失时回落 license_text 指纹推断；root 即使 metadata 缺失也回填
-  // root mod 的 license；不回退模块文本 license）
+  // 构建 metas（与 WASM build_node_metas 一致：metadata 仅认对象（其余按空 meta），
+  // 先经 normalizeMetaInput 归一负值；license 缺失时回落 license_text 指纹推断；
+  // root 即使 metadata 缺失也回填 root mod 的 license；不回退模块文本 license）
   const metas: Record<string, NodeMetaInput> = {};
   for (const n of graph.nodes) {
-    const meta: NodeMetaInput = { ...(metadata[n.id] || {}) };
+    const raw = metadata[n.id];
+    const base =
+      raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    // S11：归一负值 metadata（镜像 parse_node_meta），再进下游评分
+    const meta: NodeMetaInput = normalizeMetaInput({ ...base });
     // LICENSE 文本指纹：metadata 未显式声明 license 时，从 LICENSE 原文推断
     if (!meta.license && meta.license_text) {
       const detected = detectLicenseFromText(meta.license_text);
@@ -1311,7 +1625,10 @@ function analyzeContext(ctx: AnalysisContext): AnalysisResult {
   );
   const diags = diagnose(graph, metas);
   const suggestions = buildSuggestions(graph, metas);
-  const sizeOffenders = computeTransitiveSize(graph, metas).slice(0, 5);
+  const sizeOffenders = computeTransitiveSize(graph, metas).slice(
+    0,
+    TOP_OFFENDERS_N,
+  );
   const stats = computeEcosystemStats(
     graph,
     healthScores,
@@ -1328,6 +1645,7 @@ function analyzeContext(ctx: AnalysisContext): AnalysisResult {
     sizeOffenders,
     stats,
     metas,
+    parseWarnings,
   );
 }
 
@@ -1340,6 +1658,7 @@ function assembleResult(
   sizeOffenders: SizeOffender[],
   stats: EcosystemStats,
   metas: Record<string, NodeMetaInput>,
+  parseWarnings: string[],
 ): AnalysisResult {
   const crit = diags.filter((d) => d.severity === "critical").length;
   const warn = diags.filter((d) => d.severity === "warning").length;
@@ -1375,6 +1694,8 @@ function assembleResult(
   return {
     overall_score: overallScore,
     node_count: graph.nodes.length,
+    // v0.8.0-wasm 起：上下文解析告警（与 WASM 同字段同位置，node_count 之后）
+    parse_warnings: parseWarnings,
     diagnostics: diags,
     suggestions,
     health_scores: healthScores,
