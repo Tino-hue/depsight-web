@@ -39,8 +39,8 @@
 /// }
 /// ```
 ///
-/// 返回 JSON：overall_score / node_count / diagnostics / suggestions /
-///           health_scores / summary / graph / _root_mod /
+/// 返回 JSON：overall_score / node_count / parse_warnings / diagnostics /
+///           suggestions / health_scores / summary / graph / _root_mod /
 ///           size_offenders_top5 / node_metas / ecosystem_stats
 ///
 /// 诊断码：YANKED-001 / OUTDATED-001 / LICENSE-001 / LICENSE-002 /
@@ -89,7 +89,7 @@ pub fn analyze_from_mod_text(mod_text : String) -> String {
   let suggestions = build_suggestions(graph, metas)
   let size_offenders = compute_size_offenders(graph, metas)
   let stats = compute_ecosystem_stats(graph, health_scores, metas)
-  assemble_result(graph, health_scores, diags, suggestions, size_offenders, stats, metas)
+  assemble_result(graph, health_scores, diags, suggestions, size_offenders, stats, metas, [])
 }
 
 ///|
@@ -105,6 +105,11 @@ pub fn version() -> String {
 ///|
 /// 完整分析流程
 fn run_analysis(context_json : String) -> Result[String, String] {
+  // 0. 上下文硬上限：防止超大 JSON 撑爆 wasm 线性内存（S15）
+  if context_json.length() > max_context_bytes {
+    return Err("context JSON exceeds 16MB size limit")
+  }
+
   // 1. 解析外层 JSON
   let ctx = @json.parse(context_json) catch { _ => return Err("Invalid JSON in context") }
   guard ctx is Object(ctx_obj) else { return Err("Expected JSON object at context root") }
@@ -120,16 +125,21 @@ fn run_analysis(context_json : String) -> Result[String, String] {
   }
 
   // 3. 读 modules
+  let parse_warnings : Array[String] = []
   let modules : Map[String, String] = Map([])
   match ctx_obj.get("modules") {
     Some(Object(mods)) => {
       for pair in mods {
         let (key, value) = pair
-        guard value is String(content) else { continue }
+        guard value is String(content) else {
+          parse_warnings.push("modules[\"" + key + "\"] is not a string; skipped")
+          continue
+        }
         modules[key] = content
       }
     }
-    _ => ()
+    Some(_) => parse_warnings.push("context.modules is not an object; ignored")
+    None => ()
   }
 
   // 4. 读 metadata
@@ -141,19 +151,24 @@ fn run_analysis(context_json : String) -> Result[String, String] {
         metadata[key] = value
       }
     }
-    _ => ()
+    Some(_) => parse_warnings.push("context.metadata is not an object; ignored")
+    None => ()
   }
 
-  // 5. 读 options
-  let mut max_depth = 10
+  // 5. 读 options（max_depth 硬上限防深层 BFS 失控，钳到 [1, 64]；S15）
+  let mut max_depth = default_max_depth
   match ctx_obj.get("options") {
     Some(Object(opts)) =>
       match opts.get("max_depth") {
         Some(Number(n, ..)) => max_depth = n.to_int()
-        _ => ()
+        Some(_) => parse_warnings.push("options.max_depth is not a number; using default")
+        None => ()
       }
-    _ => ()
+    Some(_) => parse_warnings.push("context.options is not an object; ignored")
+    None => ()
   }
+  if max_depth > max_depth_hard_limit { max_depth = max_depth_hard_limit }
+  if max_depth < 1 { max_depth = 1 }
 
   // 6. 构建图
   let graph = build_graph(root, modules, max_depth)
@@ -177,5 +192,5 @@ fn run_analysis(context_json : String) -> Result[String, String] {
   let stats = compute_ecosystem_stats(graph, health_scores, metas)
 
   // 13. 序列化
-  Ok(assemble_result(graph, health_scores, diags, suggestions, size_offenders, stats, metas))
+  Ok(assemble_result(graph, health_scores, diags, suggestions, size_offenders, stats, metas, parse_warnings))
 }

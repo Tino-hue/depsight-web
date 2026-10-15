@@ -29,13 +29,17 @@ fn compute_ecosystem_stats(
         let mut family = "unknown"
         match m.license {
           Some(l) => {
-            unique_licenses[l] = true
-            family = license_family(l.to_upper())
+            // 与评分路径同口径：先经 SPDX 规范化（剥 WITH/去空白/变体映射）再计数/判家族，
+            // 避免 "MIT and GPL-3.0" / UNLICENSED 等写法在统计与评分间口径分叉（P3-M ③）
+            let normalized = normalize_license_token(l.view()).to_upper()
+            unique_licenses[normalized] = true
+            family = license_family(normalized)
           }
           None => ()
         }
         license_families[family] = license_families[family] + 1
-        total_size = total_size + m.self_size
+        // 负值钳制为 0：meta 入口已归一，此处是防御层，坏数据不得扣减 total_size（S11）
+        total_size = total_size + (if m.self_size > 0 { m.self_size } else { 0 })
         total_deprecated = total_deprecated + m.deprecated_apis.length()
       }
       None => ()

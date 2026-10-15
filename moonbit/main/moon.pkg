@@ -1,6 +1,7 @@
 pkgtype(kind: "foreign_library")
 
 import {
+  "moonbitlang/core/int",
   "moonbitlang/core/json",
 }
 

@@ -66,6 +66,16 @@ fn empty_meta() -> NodeMeta {
 }
 
 ///|
+/// 全局常量统一出处（JS fallback 在 WEIGHTS 旁维护同名常量）
+let default_max_depth : Int = 10
+let max_depth_hard_limit : Int = 64
+let max_context_bytes : Int = 16 * 1024 * 1024
+let top_offenders_n : Int = 5
+let size_warn_threshold_bytes : Int = 5_000_000
+let activity_stale_days : Int = 365
+let activity_warn_days : Int = 180
+
+///|
 /// 健康分
 priv struct HealthScore {
   node_id : String

@@ -10,6 +10,7 @@ fn assemble_result(
   size_offenders : Array[(String, Int, Int)],
   stats : EcosystemStats,
   metas : Map[String, NodeMeta],
+  parse_warnings : Array[String],
 ) -> String {
   let buf = StringBuilder()
 
@@ -19,6 +20,16 @@ fn assemble_result(
   buf.write_string(overall.to_string())
   buf.write_string(",\"node_count\":")
   buf.write_string(graph.nodes.length().to_string())
+
+  // parse_warnings：上下文里被忽略/跳过的异常字段（与 JS assembleResult 同字段同位置）
+  buf.write_string(",\"parse_warnings\":[")
+  let mut w = 0
+  for warning in parse_warnings {
+    if w > 0 { buf.write_string(",") }
+    buf.write_string(json_str(warning))
+    w = w + 1
+  }
+  buf.write_string("]")
 
   // diagnostics
   buf.write_string(",\"diagnostics\":[")
@@ -177,7 +188,7 @@ fn serialize_graph(graph : Graph) -> String {
     buf.write_string(",\"version\":")
     buf.write_string(json_str(node.version))
     buf.write_string(",\"version_resolved\":")
-    buf.write_string(if node.version != "latest" { "true" } else { "false" })
+    buf.write_string(if is_resolved_version(node.version) { "true" } else { "false" })
     buf.write_string(",\"depth\":")
     buf.write_string(node.depth.to_string())
     buf.write_string("}")
@@ -293,6 +304,12 @@ fn serialize_ecosystem_stats(stats : EcosystemStats) -> String {
 }
 
 // ========== 工具函数 ==========
+
+///|
+/// version_resolved 判定：trim + 小写后与 "latest" 比较（与 JS isResolvedVersion 一致）
+fn is_resolved_version(version : String) -> Bool {
+  version.trim().to_lower() != "latest"
+}
 
 ///|
 /// JSON string escape（按码点迭代，正确处理多字节字符）

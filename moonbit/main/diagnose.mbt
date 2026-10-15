@@ -8,6 +8,16 @@ fn is_strong_copyleft(upper : String) -> Bool {
 }
 
 ///|
+/// 判向 outdated 检查（S13）：仅当两版本均可解析且 cur < latest 才算落后。
+/// 领先版本（cur >= latest）不告警、不建议升级，避免 "降级式升级" 误导。
+fn is_outdated(current : String, latest : String) -> Bool {
+  match (parse_version(current), parse_version(latest)) {
+    (Some(cur), Some(lat)) => version_compare(cur, lat) < 0
+    _ => false
+  }
+}
+
+///|
 /// 同名节点分组（仅保留多版本组）
 fn group_nodes_by_name(graph : Graph) -> Array[(String, Array[Node])] {
   let by_name : Map[String, Array[Node]] = Map([])
@@ -80,10 +90,10 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
       })
     }
 
-    // OUTDATED-001
+    // OUTDATED-001（S13：仅落后才告警，领先版本不罚）
     match meta.latest_version {
       Some(latest) => {
-        if node.version != latest {
+        if is_outdated(node.version, latest) {
           diags.push(Diagnostic::{
             code: "OUTDATED-001",
             severity: "warning",
@@ -129,8 +139,8 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
       })
     }
 
-    // SIZE-001
-    if meta.self_size > 1_000_000 {
+    // SIZE-001（阈值与 scoring.mbt 分档对齐：>=size_warn_threshold_bytes 才告警）
+    if meta.self_size >= size_warn_threshold_bytes {
       diags.push(Diagnostic::{
         code: "SIZE-001",
         severity: "warning",
@@ -142,14 +152,14 @@ fn run_diagnostics(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Diagno
     // ACTIVITY-001 / ACTIVITY-002
     match meta.last_commit_days_ago {
       Some(days) => {
-        if days > 365 {
+        if days > activity_stale_days {
           diags.push(Diagnostic::{
             code: "ACTIVITY-001",
             severity: "critical",
             node_id: node.id,
             message: node.name + " has not been updated in " + days.to_string() + " days and may be unmaintained",
           })
-        } else if days > 180 {
+        } else if days > activity_warn_days {
           diags.push(Diagnostic::{
             code: "ACTIVITY-002",
             severity: "info",
@@ -228,10 +238,11 @@ fn build_suggestions(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Sugg
       })
     }
 
-    // OUTDATED-001（major→high / minor→medium / 其余→low）
+    // OUTDATED-001（S13：仅落后才建议升级，领先版本不出 "降级式" 建议；
+    // is_outdated 已保证两版本可解析，impact 比较不再落入低档位）
     match meta.latest_version {
       Some(latest) => {
-        if node.version != latest {
+        if is_outdated(node.version, latest) {
           let impact = match (parse_version(node.version), parse_version(latest)) {
             (Some(cur), Some(lat)) => {
               if cur.0 < lat.0 { "high" }
@@ -279,7 +290,7 @@ fn build_suggestions(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Sugg
     // ACTIVITY-001
     match meta.last_commit_days_ago {
       Some(days) =>
-        if days > 365 {
+        if days > activity_stale_days {
           sugs.push(Suggestion::{
             code: "ACTIVITY-001",
             node_id: node.id,
@@ -302,8 +313,8 @@ fn build_suggestions(graph : Graph, metas : Map[String, NodeMeta]) -> Array[Sugg
       })
     }
 
-    // SIZE-001
-    if meta.self_size > 1_000_000 {
+    // SIZE-001（阈值与 scoring.mbt 分档对齐：>=size_warn_threshold_bytes 才建议）
+    if meta.self_size >= size_warn_threshold_bytes {
       sugs.push(Suggestion::{
         code: "SIZE-001",
         node_id: node.id,

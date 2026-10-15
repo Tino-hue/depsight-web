@@ -1,4 +1,4 @@
-﻿///| 引擎契约级单测：仅经 pub 入口（version / analyze_from_mod_text /
+///| 引擎契约级单测：仅经 pub 入口（version / analyze_from_mod_text /
 ///| analyze_from_context_json）验证 MoonBit 引擎行为——priv 助手函数
 ///|（parse_version / SPDX 评分 / freshness 分档等）通过 context JSON 的输出
 ///| 逐维度断言覆盖，与 JS fallback（analyzer.test.ts）形成双端对齐。
@@ -216,6 +216,12 @@ test "parse_version 健壮性：major gap → 20；大 minor gap 触底 30；无
     @main.analyze_from_context_json(mk("1.0.0", "2.0.0"))
       .contains("\"freshness\":20"),
   )
+  // gap<=3 精确线性：80 - gap*15
+  assert_true(
+    @main.analyze_from_context_json(mk("1.0.0", "1.2.0"))
+      .contains("\"freshness\":50"),
+  )
+  // gap>3 饱和触底 30（S11：极端 minor 号不再溢出回绕）
   assert_true(
     @main.analyze_from_context_json(mk("1.0.0", "1.5.0"))
       .contains("\"freshness\":30"),
@@ -241,8 +247,9 @@ test "五维评分分档：deprecated / size / activity" {
   assert_true(out.contains("\"size_reasonableness\":40"))
   // 400 天未更新 → 10
   assert_true(out.contains("\"activity\":10"))
-  // 对应诊断：SIZE-001 warning + ACTIVITY-001 critical + DEPRECATED-001 info
-  assert_true(out.contains("\"code\":\"SIZE-001\""))
+  // 2MB < 5MB 新阈值，不再触发 SIZE-001
+  assert_false(out.contains("SIZE-001"))
+  // 对应诊断：ACTIVITY-001 critical + DEPRECATED-001 info
   assert_true(out.contains("\"code\":\"ACTIVITY-001\""))
   assert_true(out.contains("a contains 2 deprecated APIs"))
   assert_true(
@@ -335,6 +342,15 @@ test "import 解析健壮性：注释、多行块、旧版单行、空块" {
   assert_true(out.contains("\"node_count\":4"))
   // 根 license 进浅图 metas
   assert_true(out.contains("\"license\":\"Apache-2.0\""))
+}
+
+test "import 解析：多行块收尾行与依赖字符串同行（\"b@2.0.0\" }）不丢失" {
+  let out = @main.analyze_from_mod_text(
+    "name = \"demo/app\"\nversion = \"1.0.0\"\n" +
+    "import {\n  \"a@1.0.0\",\n  \"b@2.0.0\" }\n",
+  )
+  // root + a + b 均入图，收尾行依赖不得被静默丢弃
+  assert_true(out.contains("\"node_count\":3"))
 }
 
 test "moon.mod.json：path 依赖跳过不崩溃" {
@@ -434,4 +450,291 @@ test "license_families：五 key 恒输出 + 家族计数" {
   assert_true(out.contains("\"strong-copyleft\":1"))
   assert_true(out.contains("\"proprietary\":0"))
   assert_true(out.contains("\"unknown\":2"))
+}
+
+// ========== P2 修复契约测试（M-1 ~ M-8，双端与 analyzer.test.ts 对齐） ==========
+
+test "M-1：license_families 统计口径与评分路径一致（变体许可证归一后计数）" {
+  let ctx = context_json(
+    "\"a@1.0.0\"",
+    "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+    "{\"a@1.0.0\":{\"license\":\"apache 2.0\",\"latest_version\":\"1.0.0\"}}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // 评分路径归一为 Apache-2.0 → permissive 100；统计路径同口径 → permissive:1
+  assert_true(out.contains("\"compliance\":100"))
+  assert_true(out.contains("\"permissive\":1"))
+  // root 自身无 license 亦计入 unknown，故恰为 1（统计口径与评分路径一致）
+  assert_true(out.contains("\"unknown\":1"))
+}
+
+test "M-2/M-7：namesuffix 不污染 name，module 带引号头部剥离引号" {
+  let out = @main.analyze_from_mod_text(
+    "module \"q/r\"\nversion = \"2.0.0\"\nnamesuffix = \"extra\"\n",
+  )
+  // name 未被 namesuffix 覆盖，引号已剥离
+  assert_true(out.contains("\"root_id\":\"q/r@2.0.0\""))
+}
+
+test "M-3：import 块未闭合遇 section 头重置，后续引号行不产生幽灵依赖" {
+  let out = @main.analyze_from_mod_text(
+    "name = \"demo/app\"\nversion = \"1.0.0\"\n" +
+    "import {\n  \"a@1.0.0\"\n[profile.release]\nkey = \"ghost/pkg@9.9.9\"\n",
+  )
+  // root + a@1.0.0；ghost/pkg 不得入图
+  assert_true(out.contains("\"node_count\":2"))
+  assert_false(out.contains("ghost/pkg"))
+}
+
+test "M-4：溢出版本号解析失败 → freshness 70 而非回绕乱分" {
+  let ctx = context_json(
+    "\"a@1.0.0\"",
+    "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+    "{\"a@1.0.0\":{\"license\":\"MIT\",\"latest_version\":\"99999999999999999999.0.0\"}}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // 无法解析（而非 Int 回绕成奇怪值参与比较）→ 70
+  assert_true(out.contains("\"freshness\":70"))
+}
+
+test "M-5：传递体积菱形去重（共享子孙只计一次）" {
+  // root → b、c；b、c → d；d 的 self_size 在 root 传递体积中只计一次
+  let ctx = context_json(
+    "\"b@1.0.0\", \"c@1.0.0\"",
+    "{\"b@1.0.0\":\"{\\\"name\\\":\\\"b\\\",\\\"version\\\":\\\"1.0.0\\\",\\\"deps\\\":{\\\"d@1.0.0\\\":\\\"1.0.0\\\"}}\"," +
+    "\"c@1.0.0\":\"{\\\"name\\\":\\\"c\\\",\\\"version\\\":\\\"1.0.0\\\",\\\"deps\\\":{\\\"d@1.0.0\\\":\\\"1.0.0\\\"}}\"," +
+    "\"d@1.0.0\":\"{\\\"name\\\":\\\"d\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+    "{\"d@1.0.0\":{\"license\":\"MIT\",\"latest_version\":\"1.0.0\",\"self_size\":1000}}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // root 传递体积 = b0 + c0 + d1000 = 1000；d 不得重复计为 2000
+  assert_true(
+    out.contains(
+      "\"node_id\":\"demo/app@1.0.0\",\"self_size\":0,\"transitive_size\":1000",
+    ),
+  )
+}
+
+test "M-6：SIZE-001 阈值与 size 分档对齐（4MB 静默，5MB 边界告警）" {
+  fn mk(size : Int) -> String {
+    context_json(
+      "\"a@1.0.0\"",
+      "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+      "{\"a@1.0.0\":{\"license\":\"MIT\",\"latest_version\":\"1.0.0\",\"self_size\":" +
+      size.to_string() + "}}",
+    )
+  }
+  // 4MB：低于 5MB 阈值，无 SIZE-001
+  assert_false(@main.analyze_from_context_json(mk(4_000_000)).contains("SIZE-001"))
+  // 5MB：边界触发诊断与建议
+  let big = @main.analyze_from_context_json(mk(5_000_000))
+  assert_true(big.contains("\"code\":\"SIZE-001\""))
+  assert_true(big.contains("consider slimming it down"))
+  assert_true(big.contains("Find a lighter alternative to a"))
+}
+
+test "M-8：同名依赖优先用 modules 内容，不回退 root 嫁接子树" {
+  // root demo/app@1.0.0 依赖 demo/app@0.9.0（同名旧版，modules 中有独立内容 → x@1.0.0）
+  let ctx = context_json(
+    "\"demo/app@0.9.0\"",
+    "{\"demo/app@0.9.0\":\"{\\\"name\\\":\\\"demo/app\\\",\\\"version\\\":\\\"0.9.0\\\",\\\"deps\\\":{\\\"x@1.0.0\\\":\\\"1.0.0\\\"}}\"}",
+    "{}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // root + demo/app@0.9.0 + x@1.0.0；若嫁接 root，x 不会出现（node_count:2）
+  assert_true(out.contains("\"node_count\":3"))
+  assert_true(out.contains("x@1.0.0"))
+}
+
+// ========== P1 批次3（S10-S15）+ P3-M 契约测试（双端与 analyzer.test.ts 对齐） ==========
+
+test "S10：UNLICENSED 计 proprietary（40 分）而非 permissive" {
+  let ctx = context_json(
+    "\"a@1.0.0\"",
+    "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+    "{\"a@1.0.0\":{\"license\":\"UNLICENSED\",\"latest_version\":\"1.0.0\"}}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // 入口先判 proprietary：避免被 permissive 的 "UNLICENSE" 子串误判
+  assert_true(out.contains("\"compliance\":40"))
+  assert_true(out.contains("\"proprietary\":1"))
+}
+
+test "S11：负值 metadata 归一（不扣减体积 / 不失真评分）" {
+  let ctx = context_json(
+    "\"a@1.0.0\"",
+    "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+    "{\"a@1.0.0\":{\"license\":\"MIT\",\"latest_version\":\"1.0.0\",\"self_size\":-500,\"last_commit_days_ago\":-10,\"total_api_count\":-5}}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // self_size 钳 0 → 体积不扣减；days 负 → None → activity 中位 50；api_count 钳 0 → deprecated 100
+  assert_true(out.contains("\"total_size_bytes\":0"))
+  assert_true(out.contains("\"activity\":50"))
+  assert_true(out.contains("\"deprecated_density\":100"))
+}
+
+test "S12：缺 name/version 的 mod 文本视为垃圾输入报错" {
+  // TOML 分支：有 name 无 version
+  let toml_out = @main.analyze_from_mod_text("name = \"a/b\"\n")
+  assert_true(
+    toml_out.contains("moon.mod missing required field 'name' or 'version'"),
+  )
+  // JSON 分支：有 name 无 version
+  let json_out = @main.analyze_from_mod_text("{\"name\":\"x/y\"}")
+  assert_true(
+    json_out.contains("moon.mod.json missing required field 'name' or 'version'"),
+  )
+}
+
+test "S12 连带：垃圾模块内容不产生 unknown@0.0.0 幽灵节点" {
+  // context 中模块内容为垃圾文本 → resolve_module Err => None，节点不落地
+  let ctx = context_json(
+    "\"a@1.0.0\"",
+    "{\"a@1.0.0\":\"not a mod at all\"}",
+    "{}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  assert_false(out.contains("unknown@0.0.0"))
+}
+
+test "S13：领先版本不告警不建议升级（freshness 90）" {
+  // 节点版本以 root import 声明为准，故 import/modules key/内容 version 均须为 2.0.0
+  let ctx = context_json(
+    "\"a@2.0.0\"",
+    "{\"a@2.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"2.0.0\\\"}\"}",
+    "{\"a@2.0.0\":{\"license\":\"MIT\",\"latest_version\":\"1.0.0\"}}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // cur(2.0.0) >= latest(1.0.0) → 90 分、无 OUTDATED-001（防 "降级式升级" 误导）
+  assert_true(out.contains("\"freshness\":90"))
+  assert_false(out.contains("OUTDATED-001"))
+}
+
+test "S14：SPDX 表达式合规分（AND 取最差 / 括号递归 / 小写连接词）" {
+  fn score_of(license : String) -> String {
+    let ctx = context_json(
+      "\"a@1.0.0\"",
+      "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+      "{\"a@1.0.0\":{\"license\":\"" +
+      license +
+      "\",\"latest_version\":\"1.0.0\"}}",
+    )
+    @main.analyze_from_context_json(ctx)
+  }
+  // AND 取最差：min(100, 30) = 30
+  assert_true(score_of("MIT and GPL-3.0").contains("\"compliance\":30"))
+  // 括号递归：AND 拆出 (MIT OR Apache-2.0)，剥外层后 OR 拆分 → min(30, max(100,100)) = 30
+  assert_true(
+    score_of("GPL-3.0 AND (MIT OR Apache-2.0)").contains("\"compliance\":30"),
+  )
+  // 小写连接词 + 变体：max(100, 30) = 100
+  assert_true(score_of("mit or gplv3").contains("\"compliance\":100"))
+  // 悬挂括号 → 不平衡保守 fallback：single(GPL-3.0) = 30
+  assert_true(score_of("(GPL-3.0").contains("\"compliance\":30"))
+}
+
+test "S15：options.max_depth 钳制 [1,64]" {
+  fn chain_ctx(max_depth_json : String) -> String {
+    "{\"root\":\"" +
+    root_mod_json_escaped("\"a@1.0.0\"") +
+    "\",\"modules\":{" +
+    "\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\",\\\"deps\\\":{\\\"b@1.0.0\\\":\\\"1.0.0\\\"}}\"," +
+    "\"b@1.0.0\":\"{\\\"name\\\":\\\"b\\\",\\\"version\\\":\\\"1.0.0\\\",\\\"deps\\\":{\\\"c@1.0.0\\\":\\\"1.0.0\\\"}}\"," +
+    "\"c@1.0.0\":\"{\\\"name\\\":\\\"c\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}," +
+    "\"metadata\":{},\"options\":{\"max_depth\":" +
+    max_depth_json +
+    "}}"
+  }
+  // root→a→b→c 共 4 节点；max_depth=1 只展开到深度 1（root+a）
+  assert_true(
+    @main.analyze_from_context_json(chain_ctx("1")).contains("\"node_count\":2"),
+  )
+  // 0 钳到 1，同样 2 节点
+  assert_true(
+    @main.analyze_from_context_json(chain_ctx("0")).contains("\"node_count\":2"),
+  )
+  // 999999 钳到 64，链长 3 不受影响 → 4 节点
+  assert_true(
+    @main.analyze_from_context_json(chain_ctx("999999")).contains(
+      "\"node_count\":4",
+    ),
+  )
+}
+
+test "S15：context JSON 超 16MB 硬上限直接报错" {
+  let sb = StringBuilder()
+  sb.write_string("{\"root\":\"")
+  let mut chunk = "a"
+  while chunk.length() < 1024 * 1024 {
+    chunk = chunk + chunk
+  }
+  // 1MB chunk × 17 = 17MB > 16MB 上限，步骤 0 直接拒绝
+  for _ in 0..<17 {
+    sb.write_string(chunk)
+  }
+  sb.write_string("\",\"modules\":{},\"metadata\":{}}")
+  let out = @main.analyze_from_context_json(sb.to_string())
+  assert_true(out.contains("context JSON exceeds 16MB size limit"))
+}
+
+test "S15：自环依赖检出 CYCLE-001（迭代 DFS 与递归版同语义）" {
+  let ctx = context_json(
+    "\"a@1.0.0\"",
+    "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\",\\\"deps\\\":{\\\"a@1.0.0\\\":\\\"1.0.0\\\"}}\"}",
+    "{}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  assert_true(out.contains("\"node_count\":2"))
+  assert_true(out.contains("\"code\":\"CYCLE-001\""))
+  assert_true(
+    out.contains("dependency cycle detected: a@1.0.0 -> a@1.0.0"),
+  )
+}
+
+test "parse_warnings：异常字段类型收集 warning 而非静默吞噬" {
+  let ctx = "{\"root\":\"" +
+    root_mod_json_escaped("\"a@1.0.0\"") +
+    "\",\"modules\":[],\"metadata\":\"oops\",\"options\":\"oops\"}"
+  let out = @main.analyze_from_context_json(ctx)
+  assert_true(out.contains("context.modules is not an object; ignored"))
+  assert_true(out.contains("context.metadata is not an object; ignored"))
+  assert_true(out.contains("context.options is not an object; ignored"))
+}
+
+test "parse_warnings：modules 非字符串值跳过并告警；max_depth 非数字回退默认" {
+  let ctx = "{\"root\":\"" +
+    root_mod_json_escaped("\"a@1.0.0\"") +
+    "\",\"modules\":{\"a@1.0.0\":123},\"metadata\":{},\"options\":{\"max_depth\":\"x\"}}"
+  let out = @main.analyze_from_context_json(ctx)
+  // 序列化后 warning 内引号被转义为 \"，故字面量需匹配反斜杠+引号
+  assert_true(
+    out.contains("modules[\\\"a@1.0.0\\\"] is not a string; skipped"),
+  )
+  assert_true(
+    out.contains("options.max_depth is not a number; using default"),
+  )
+}
+
+test "P3-M③：统计口径与评分一致（变体许可证归一后去重计数）" {
+  let ctx = context_json(
+    "\"a@1.0.0\", \"b@1.0.0\"",
+    "{\"a@1.0.0\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"1.0.0\\\"}\"," +
+    "\"b@1.0.0\":\"{\\\"name\\\":\\\"b\\\",\\\"version\\\":\\\"1.0.0\\\"}\"}",
+    "{\"a@1.0.0\":{\"license\":\"apache 2.0\",\"latest_version\":\"1.0.0\"}," +
+    "\"b@1.0.0\":{\"license\":\"Apache-2.0\",\"latest_version\":\"1.0.0\"}}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  // 两种写法归一后同为 APACHE-2.0 → unique 只计 1；家族统计 permissive 2（root 另计 unknown）
+  assert_true(out.contains("\"unique_licenses\":1"))
+  assert_true(out.contains("\"permissive\":2"))
+}
+
+test "P3-M⑤：version_resolved 判定大小写不敏感（Latest 视为未解析）" {
+  let ctx = context_json(
+    "\"a@latest\"",
+    "{\"a@latest\":\"{\\\"name\\\":\\\"a\\\",\\\"version\\\":\\\"Latest\\\"}\"}",
+    "{}",
+  )
+  let out = @main.analyze_from_context_json(ctx)
+  assert_true(out.contains("\"version_resolved\":false"))
 }

@@ -4,17 +4,19 @@
 /// 计算单个节点的健康分
 fn compute_health_score(node : Node, mod : Module, meta : NodeMeta) -> HealthScore {
   let freshness = score_freshness(mod, meta)
-  let compliance = score_compliance(mod, meta)
+  let compliance = score_compliance(meta)
   let deprecated = score_deprecated(meta)
   let size = score_size(meta)
   let activity = score_activity(meta)
 
   let w = weights
-  let total = (freshness.to_double() * w["freshness"] +
+  let raw_total = (freshness.to_double() * w["freshness"] +
                compliance.to_double() * w["compliance"] +
                deprecated.to_double() * w["deprecated"] +
                size.to_double() * w["size"] +
                activity.to_double() * w["activity"]).round().to_int()
+  // 入户口径统一钳制 min(100, max(0,…))：坏数据下总分稳定落在 [0,100]（S11）
+  let total = if raw_total > 100 { 100 } else if raw_total < 0 { 0 } else { raw_total }
 
   HealthScore::{
     node_id: node.id,
@@ -54,7 +56,9 @@ fn score_freshness(mod : Module, meta : NodeMeta) -> Int {
         (Some(cur), Some(lat)) => {
           if cur.0 < lat.0 { 20 }
           else if cur.1 < lat.1 {
-            let gap = lat.1 - cur.1
+            // gap 饱和到 4：4×15=60 无溢出风险，且各档位与旧行为一致（gap=4 时 80-60=20→钳 30）
+            let mut gap = lat.1 - cur.1
+            if gap > 4 { gap = 4 }
             let score = 80 - gap * 15
             if score < 30 { 30 } else { score }
           } else { 90 }
@@ -103,13 +107,15 @@ fn version_compare(a : (Int, Int, Int), b : (Int, Int, Int)) -> Int {
 }
 
 ///|
-/// 解析非负整数（严格数字校验，失败返回 None）
+/// 解析非负整数（严格数字校验，失败返回 None；溢出返回 None，防 wrap-around 污染评分）
 fn parse_uint(s : StringView) -> Int? {
   let t = s.trim()
   if t.is_empty() { return None }
   let mut n = 0
   for c in t {
     if !(c >= '0' && c <= '9') { return None }
+    // n > (max-9)/10 时 n*10+9 必溢出（Int 为 31 位）
+    if n > (@int.MAX_VALUE - 9) / 10 { return None }
     n = n * 10 + (c.to_int() - 48)
   }
   Some(n)
@@ -118,54 +124,186 @@ fn parse_uint(s : StringView) -> Int? {
 ///|
 /// 许可证合规评分：对 SPDX 表达式归一化后取分。
 /// OR 表达式取最优分支，AND 表达式取最差分支（合规义务叠加）。
-fn score_compliance(mod : Module, meta : NodeMeta) -> Int {
+/// 只认 meta.license（root 的 license 已由 build_node_metas 回填进 meta，mod.license 兜底不可达），
+/// 故不再接收 mod 参数（P3-M ① 死代码清理）
+fn score_compliance(meta : NodeMeta) -> Int {
   let license = match meta.license {
     Some(l) => l
-    None => match mod.license {
-      Some(l) => l
-      None => return 40
-    }
+    None => return 40
   }
   license_expr_score(license)
 }
 
 ///|
-/// SPDX 许可证表达式评分
+/// SPDX 许可证表达式评分：大小写不敏感 + 括号递归解析。
+/// 括号平衡 → 自顶向下按 OR / AND 切分（括号块作整体 token）；
+/// 不平衡/无连接词 → 保守 fallback 为单个 token（clean_license_token 剥括号），
+/// 无法解析的表达式计 50（unknown 中位分）。与 JS licenseExprScore 一致。
 fn license_expr_score(expr : String) -> Int {
-  let or_parts = split_license_or(expr)
-  let mut best = 0
-  for p in or_parts {
-    let and_parts = split_license_and(p)
-    let mut worst = 100
-    for q in and_parts {
-      let s = single_license_score(q)
-      if s < worst { worst = s }
+  license_expr_score_inner(expr.trim().view())
+}
+
+fn license_expr_score_inner(v : StringView) -> Int {
+  let t0 = v.trim()
+  if t0.is_empty() { return 50 }
+  // 整体被括号包裹时先剥外层（如 "(MIT OR Apache-2.0)"），内层连接词才能升到顶层拆分
+  let t = strip_outer_parens(t0)
+  // 括号不平衡 → 保守 fallback 为单个 token
+  if !license_paren_balanced(t) { return single_license_score(clean_license_token(t)) }
+
+  // 自顶向下按 OR 拆分（括号保护），首个 OR 命中即递归
+  match split_license_top(t, "or") {
+    Some(or_parts) => {
+      let mut best = 0
+      for p in or_parts {
+        let s = license_and_score(p.view())
+        if s > best { best = s }
+      }
+      best
     }
-    if worst > best { best = worst }
+    None => license_and_score(t)
   }
-  if best == 0 { 50 } else { best }
+}
+
+/// AND 组合：取各分支最差（合规义务叠加）
+fn license_and_score(v : StringView) -> Int {
+  let t = v.trim()
+  match split_license_top(t, "and") {
+    Some(and_parts) => {
+      let mut worst = 100
+      for p in and_parts {
+        let s = license_expr_score_inner(p.view())
+        if s < worst { worst = s }
+      }
+      worst
+    }
+    None => single_license_score(clean_license_token(t))
+  }
 }
 
 ///|
-/// OR 分支拆分（同时兼容 "MIT/Apache-2.0" 双许可证简写）
-fn split_license_or(expr : String) -> Array[String] {
-  let out : Array[String] = []
-  for seg in expr.split("/") {
-    for part in seg.split(" OR ") {
-      out.push(clean_license_token(part))
+/// 剥掉整体包裹的最外层括号对：仅当首个 '(' 的配对 ')' 之后只剩空白才算整体包裹
+///（如 "(MIT OR Apache-2.0)" → "MIT OR Apache-2.0"；"((a))" 循环剥至 "a"）。
+/// 配对失败或后面还有内容则原样返回。
+fn strip_outer_parens(v : StringView) -> StringView {
+  let mut t = v.trim()
+  while t.has_prefix("(") {
+    let n = t.length()
+    let mut depth = 0
+    let mut close = -1
+    let mut i = 0
+    while i < n {
+      let c : Char = t[i].unsafe_to_char()
+      if c == '(' {
+        depth = depth + 1
+      } else if c == ')' {
+        depth = depth - 1
+        if depth == 0 {
+          close = i
+          break
+        }
+      }
+      i = i + 1
+    }
+    if close < 0 { break }
+    // 配对 ')' 后必须只剩空白，否则不是整体包裹（如 "(a) (b)"）
+    if t[close+1:].trim().is_empty() {
+      t = t[1:close].trim()
+    } else {
+      break
     }
   }
-  out
+  t
 }
 
 ///|
-/// AND 分支拆分
-fn split_license_and(expr : String) -> Array[String] {
-  let out : Array[String] = []
-  for part in expr.split(" AND ") {
-    out.push(clean_license_token(part))
+/// 括号平衡检查
+fn license_paren_balanced(v : StringView) -> Bool {
+  let mut depth = 0
+  for c in v {
+    if c == '(' { depth = depth + 1 } else if c == ')' {
+      depth = depth - 1
+      if depth < 0 { return false }
+    }
   }
-  out
+  depth == 0
+}
+
+///|
+/// 自顶向下按连接词拆分（跳过括号内部，大小写不敏感，操作数含空白才算连接词）。
+/// 返回 None 表示无该连接词。兼容 "MIT/Apache-2.0" 双许可证简写（视作 OR）。
+fn split_license_top(v : StringView, conn : String) -> Array[String]? {
+  let s = v.trim()
+  let parts : Array[String] = []
+  let mut cur = StringBuilder()
+  let mut depth = 0
+  let mut i = 0
+  let n = s.length()
+  while i < n {
+    let c : Char = s[i].unsafe_to_char()
+    if c == '(' {
+      depth = depth + 1
+      cur.write_char('(')
+      i = i + 1
+    } else if c == ')' {
+      depth = depth - 1
+      cur.write_char(')')
+      i = i + 1
+    } else if depth == 0 {
+      // 尝试匹配连接词（小写比较）
+      let is_conn = license_match_conn(s, i, conn)
+      if is_conn {
+        // 兼容双许可证简写：以 '/' 结尾的 token 视作 OR 分支，按 '/' 再切
+        parts.push(cur.to_string())
+        cur = StringBuilder()
+        i = i + conn.length()
+      } else {
+        cur.write_char(c)
+        i = i + 1
+      }
+    } else {
+      cur.write_char(c)
+      i = i + 1
+    }
+  }
+  if parts.length() == 0 { return None }
+  // 末尾操作数
+  parts.push(cur.to_string())
+  // 兼容 "MIT/Apache-2.0" 双许可证简写：以 '/' 结尾的 token 视作 OR 分支
+  if conn == "or" {
+    let expanded : Array[String] = []
+    for p in parts {
+      for seg in p.split("/") {
+        expanded.push(seg.trim().to_owned())
+      }
+    }
+    return Some(expanded)
+  }
+  Some(parts)
+}
+
+///|
+/// 在 s 的 i 位置尝试匹配小写连接词 conn（前后需为操作数边界：前为空白/起始，后为空白）。
+/// 返回匹配长度（0 表示不匹配）。
+fn license_match_conn(s : StringView, i : Int, conn : String) -> Bool {
+  let clen = conn.length()
+  if i + clen > s.length() { return false }
+  // 前缀必须为空格或起始，避免 "andromeda"/"andr" 误判
+  if i > 0 {
+    let prev = s[i - 1].unsafe_to_char()
+    if prev != ' ' && prev != '\t' { return false }
+  }
+  // 逐字符小写比较（| 与 != 优先级歧义，显式加括号）
+  for k in 0..<clen {
+    let sc = s[i + k].unsafe_to_char()
+    let cc = conn[k].unsafe_to_char()
+    if (sc.to_int() | 0x20) != cc.to_int() { return false }
+  }
+  // 后缀必须为空白（连接词后须跟操作数）
+  let after = i + clen
+  if after >= s.length() { return false }
+  let next = s[after].unsafe_to_char()
+  next == ' ' || next == '\t'
 }
 
 ///|
@@ -183,8 +321,16 @@ fn clean_license_token(s : StringView) -> String {
 
 ///|
 /// 许可证家族分类（输入已 upper 化，做子串匹配）。
+/// 入口先判 proprietary：UNLICENSED/PROPRIETARY/COMMERCIAL/SSPL 必须在 permissive 的
+/// "UNLICENSE" 子串之前拦截，否则 UNLICENSED 会被误判 permissive（S10）。
 /// 注意顺序：weak-copyleft 列表包含 LGPL，必须先于 strong-copyleft 的 "GPL" 子串判断。
 fn license_family(upper : String) -> String {
+  if upper.contains("UNLICENSED") ||
+    upper.contains("PROPRIETARY") ||
+    upper.contains("COMMERCIAL") ||
+    upper.contains("SSPL") {
+    return "proprietary"
+  }
   let permissive = ["MIT", "MIT-0", "APACHE", "ASL-2.0", "BSD", "ISC", "UNLICENSE", "ZLIB", "0BSD", "CC0", "WTFPL"]
   for p in permissive {
     if upper.contains(p) { return "permissive" }
@@ -296,7 +442,7 @@ fn score_size(meta : NodeMeta) -> Int {
   else if size < 100_000 { 100 }
   else if size < 500_000 { 80 }
   else if size < 1_000_000 { 60 }
-  else if size < 5_000_000 { 40 }
+  else if size < size_warn_threshold_bytes { 40 }
   else { 20 }
 }
 

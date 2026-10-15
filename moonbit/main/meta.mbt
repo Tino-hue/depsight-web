@@ -1,6 +1,24 @@
 ///| NodeMeta 构建（从 context.metadata JSON 回填）。
 
 ///|
+/// 无元数据时的默认值统一走 empty_meta()（model.mbt），
+/// 带 root license 的场景用 with_license 在默认 meta 上回填，避免 3 处手写重复。
+fn with_license(root : Module) -> NodeMeta {
+  NodeMeta::{
+    license: root.license,
+    license_source: if root.license is Some(_) { Some("mod_text") } else { None },
+    latest_version: None,
+    last_commit_days_ago: None,
+    self_size: 0,
+    total_api_count: 0,
+    deprecated_apis: [],
+    yanked: false,
+    yanked_reason: None,
+    source_unavailable: false,
+  }
+}
+
+///|
 /// 从 context.metadata 构造 NodeMeta
 fn build_node_metas(graph : Graph, root : Module, metadata : Map[String, Json]) -> Map[String, NodeMeta] {
   let metas : Map[String, NodeMeta] = Map([])
@@ -8,23 +26,7 @@ fn build_node_metas(graph : Graph, root : Module, metadata : Map[String, Json]) 
   for node in graph.nodes {
     let meta = match metadata.get(node.id) {
       Some(Json::Object(obj)) => parse_node_meta(obj)
-      _ =>
-        NodeMeta::{
-          license: if node.id == graph.root_id { root.license } else { None },
-          license_source: if node.id == graph.root_id && root.license is Some(_) {
-            Some("mod_text")
-          } else {
-            None
-          },
-          latest_version: None,
-          last_commit_days_ago: None,
-          self_size: 0,
-          total_api_count: 0,
-          deprecated_apis: [],
-          yanked: false,
-          yanked_reason: None,
-          source_unavailable: false,
-        }
+      _ => if node.id == graph.root_id { with_license(root) } else { empty_meta() }
     }
     metas[node.id] = meta
   }
@@ -57,18 +59,7 @@ fn build_shallow_metas(graph : Graph, root : Module) -> Map[String, NodeMeta] {
   let metas : Map[String, NodeMeta] = Map([])
   for node in graph.nodes {
     if node.id == graph.root_id {
-      metas[node.id] = NodeMeta::{
-        license: root.license,
-        license_source: if root.license is Some(_) { Some("mod_text") } else { None },
-        latest_version: None,
-        last_commit_days_ago: None,
-        self_size: 0,
-        total_api_count: 0,
-        deprecated_apis: [],
-        yanked: false,
-        yanked_reason: None,
-        source_unavailable: false,
-      }
+      metas[node.id] = with_license(root)
     } else {
       metas[node.id] = empty_meta()
     }
@@ -105,16 +96,26 @@ fn parse_node_meta(obj : Map[String, Json]) -> NodeMeta {
     Some(Json::String(s)) => Some(s)
     _ => None
   }
+  // 负值 metadata 归一：上游坏数据不得让总分 >100 或扣减 total_size（S11）
   let last_commit_days_ago = match obj.get("last_commit_days_ago") {
-    Some(Json::Number(n, ..)) => Some(n.to_int())
+    Some(Json::Number(n, ..)) => {
+      let d = n.to_int()
+      if d < 0 { None } else { Some(d) }
+    }
     _ => None
   }
   let self_size = match obj.get("self_size") {
-    Some(Json::Number(n, ..)) => n.to_int()
+    Some(Json::Number(n, ..)) => {
+      let s = n.to_int()
+      if s < 0 { 0 } else { s }
+    }
     _ => 0
   }
   let total_api_count = match obj.get("total_api_count") {
-    Some(Json::Number(n, ..)) => n.to_int()
+    Some(Json::Number(n, ..)) => {
+      let t = n.to_int()
+      if t < 0 { 0 } else { t }
+    }
     _ => 0
   }
   let deprecated_apis : Array[String] = []

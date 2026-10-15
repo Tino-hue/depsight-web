@@ -25,6 +25,10 @@ fn parse_mod_json(text : String) -> Result[Module, String] {
     Some(String(s)) => s
     _ => "0.0.0"
   }
+  // S12：缺 name/version 视为垃圾输入，返回 Err 而非静默产出 unknown@0.0.0
+  if name == "unknown" || version == "0.0.0" {
+    return Err("moon.mod.json missing required field 'name' or 'version'")
+  }
   let license = match obj.get("license") {
     Some(String(s)) => Some(s)
     _ => None
@@ -54,15 +58,26 @@ fn parse_mod_toml(text : String) -> Result[Module, String] {
   for raw in text.split("\n") {
     let line = strip_toml_comment(raw)
     if line.is_empty() { continue }
+    // 普通 section 头意味着 import 块已意外收尾，后续带引号的行是别的字段，不当依赖
+    if in_import && line.has_prefix("[") { in_import = false }
 
-    if line.has_prefix("name") && line.contains("=") {
+    // 键名须以空白或 = 结尾，避免 name 误命中 namesuffix、version 误命中 versioning
+    if line.has_prefix("name") &&
+      (line.length() == 4 || line[4].unsafe_to_char() == ' ' || line[4] == '=') &&
+      line.contains("=") {
       result.name = strip_quotes(toml_value(line))
-    } else if line.has_prefix("module") && !line.contains("=") {
-      // 头部行：`module my/app`（等价于 name = "my/app"）
-      result.name = line["module".length():].trim().to_owned()
-    } else if line.has_prefix("version") && line.contains("=") {
+    } else if line.has_prefix("module") &&
+      (line.length() == 6 || line[6].unsafe_to_char() == ' ' || line[6] == '=') &&
+      !line.contains("=") {
+      // 头部行：`module my/app` 或带引号 `module "my/app"`（等价于 name = "my/app"）
+      result.name = strip_quotes(line["module".length():].trim().to_owned())
+    } else if line.has_prefix("version") &&
+      (line.length() == 7 || line[7].unsafe_to_char() == ' ' || line[7] == '=') &&
+      line.contains("=") {
       result.version = strip_quotes(toml_value(line))
-    } else if line.has_prefix("license") && line.contains("=") {
+    } else if line.has_prefix("license") &&
+      (line.length() == 7 || line[7].unsafe_to_char() == ' ' || line[7] == '=') &&
+      line.contains("=") {
       result.license = Some(strip_quotes(toml_value(line)))
     } else if line.has_prefix("import") {
       if line.contains("{") {
@@ -88,11 +103,8 @@ fn parse_mod_toml(text : String) -> Result[Module, String] {
           }
         }
       }
-    } else if in_import && line.contains("}") {
-      // 多行 import 块的收尾行（无字符串）
-      in_import = false
     } else if in_import && line.contains("\"") {
-      // 多行 import 里的字符串
+      // 多行 import 里的字符串（收尾行 `"b@2.0.0" }` 字符串与 } 同行，须先提取再收尾）
       match extract_quoted(line) {
         Some(dep_str) => {
           let (n, v) = split_dep_name(dep_str)
@@ -101,9 +113,16 @@ fn parse_mod_toml(text : String) -> Result[Module, String] {
         None => ()
       }
       if line.contains("}") { in_import = false }
+    } else if in_import && line.contains("}") {
+      // 多行 import 块的收尾行（无字符串）
+      in_import = false
     }
   }
 
+  // S12：缺 name/version 视为垃圾输入，返回 Err 而非静默产出 unknown@0.0.0
+  if result.name == "unknown" || result.version == "0.0.0" {
+    return Err("moon.mod missing required field 'name' or 'version'")
+  }
   Ok(result)
 }
 

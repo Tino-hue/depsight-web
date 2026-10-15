@@ -5,7 +5,8 @@
 fn build_graph(root : Module, modules : Map[String, String], max_depth : Int) -> Graph {
   let nodes : Array[Node] = []
   let edges : Array[Edge] = []
-  let node_map : Map[String, Node] = Map([])
+  // 仅作去重集合用（节点实体由 nodes 数组持有），故存 Bool 不存 Node
+  let node_ids : Map[String, Bool] = Map([])
   let visited : Map[String, Bool] = Map([])
 
   fn make_id(name : String, version : String) -> String {
@@ -14,10 +15,9 @@ fn build_graph(root : Module, modules : Map[String, String], max_depth : Int) ->
 
   fn add_node(name : String, version : String, depth : Int) -> String {
     let id = make_id(name, version)
-    if !node_map.contains(id) {
-      let node = Node::{ id, name, version, depth }
-      node_map[id] = node
-      nodes.push(node)
+    if !node_ids.contains(id) {
+      node_ids[id] = true
+      nodes.push(Node::{ id, name, version, depth })
     }
     id
   }
@@ -27,7 +27,6 @@ fn build_graph(root : Module, modules : Map[String, String], max_depth : Int) ->
   }
 
   fn resolve_module(name : String, version : String) -> Module? {
-    if name == root.name { return Some(root) }
     let key = make_id(name, version)
     match modules.get(key) {
       Some(content) =>
@@ -35,7 +34,9 @@ fn build_graph(root : Module, modules : Map[String, String], max_depth : Int) ->
           Ok(m) => Some(m)
           Err(_) => None
         }
-      None => None
+      None =>
+        // modules 未命中才回退根节点，避免同名依赖被嫁接到 root 子树
+        if name == root.name { Some(root) } else { None }
     }
   }
 
@@ -92,44 +93,58 @@ fn find_cycles(graph : Graph) -> Array[Array[String]] {
   let seen : Map[String, Bool] = Map([])
   let stack : Array[String] = []
 
-  fn dfs(id : String) -> Unit {
-    color[id] = 1
-    stack.push(id)
-    match adj.get(id) {
-      Some(nexts) =>
-        for next in nexts {
-          match color.get(next) {
-            Some(1) => {
-              // 回边：从栈中重建环路径（去重后记录）
-              let mut start_idx = 0
-              for i in 0..<stack.length() {
-                if stack[i] == next { start_idx = i }
-              }
-              let path : Array[String] = []
-              for i in start_idx..<stack.length() {
-                path.push(stack[i])
-              }
-              path.push(next)
-              let key = path.join("->")
-              if !seen.contains(key) {
-                seen[key] = true
-                cycles.push(path)
-              }
+  // 迭代式 DFS（显式调用栈）：深层依赖图下递归会爆栈，三色标记逻辑与递归版一致（S15）
+  fn dfs_iter(start : String) -> Unit {
+    let frames : Array[(String, Int)] = [(start, 0)] // (节点, 下一个待处理孩子下标)
+    color[start] = 1
+    stack.push(start)
+    while frames.length() > 0 {
+      let (id, idx) = frames[frames.length() - 1]
+      let nexts = match adj.get(id) {
+        Some(list) => list
+        None => []
+      }
+      if idx < nexts.length() {
+        frames[frames.length() - 1] = (id, idx + 1)
+        let next = nexts[idx]
+        match color.get(next) {
+          Some(1) => {
+            // 回边：从栈中重建环路径（去重后记录）
+            let mut start_idx = 0
+            for i in 0..<stack.length() {
+              if stack[i] == next { start_idx = i }
             }
-            Some(2) => ()
-            _ => dfs(next)
+            let path : Array[String] = []
+            for i in start_idx..<stack.length() {
+              path.push(stack[i])
+            }
+            path.push(next)
+            let key = path.join("->")
+            if !seen.contains(key) {
+              seen[key] = true
+              cycles.push(path)
+            }
+          }
+          Some(2) => ()
+          _ => {
+            color[next] = 1
+            stack.push(next)
+            frames.push((next, 0))
           }
         }
-      None => ()
+      } else {
+        // 孩子处理完毕：弹出帧与栈，标记完成
+        let _ = frames.pop()
+        let _ = stack.pop()
+        color[id] = 2
+      }
     }
-    let _ = stack.pop()
-    color[id] = 2
   }
 
   // 从所有未访问节点出发（正常情况下 root 可达全部节点）
   for node in graph.nodes {
     if !color.contains(node.id) {
-      dfs(node.id)
+      dfs_iter(node.id)
     }
   }
 
@@ -141,23 +156,14 @@ fn find_cycles(graph : Graph) -> Array[Array[String]] {
 fn build_shallow_graph(root : Module) -> Graph {
   let nodes : Array[Node] = []
   let edges : Array[Edge] = []
-  let node_map : Map[String, Node] = Map([])
 
-  fn make_id(name : String, version : String) -> String {
-    name + "@" + version
-  }
-
-  let root_id = make_id(root.name, root.version)
-  let root_node = Node::{ id: root_id, name: root.name, version: root.version, depth: 0 }
-  nodes.push(root_node)
-  node_map[root_id] = root_node
+  let root_id = root.name + "@" + root.version
+  nodes.push(Node::{ id: root_id, name: root.name, version: root.version, depth: 0 })
 
   for pair in root.deps {
     let (dep_name, dep_ver) = pair
-    let dep_id = make_id(dep_name, dep_ver)
-    let dep_node = Node::{ id: dep_id, name: dep_name, version: dep_ver, depth: 1 }
-    nodes.push(dep_node)
-    node_map[dep_id] = dep_node
+    let dep_id = dep_name + "@" + dep_ver
+    nodes.push(Node::{ id: dep_id, name: dep_name, version: dep_ver, depth: 1 })
     edges.push(Edge::{ from: root_id, to: dep_id })
   }
 

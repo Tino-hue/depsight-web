@@ -59,18 +59,26 @@ fn compute_transitive_sizes(graph : Graph, metas : Map[String, NodeMeta]) -> Arr
     result.push((node.id, self_size, transitive_size(node.id)))
   }
 
-  // 按传递体积降序
-  result.sort_by(fn(a, b) { b.2 - a.2 })
+  // 按传递体积降序（三向比较：b.2 - a.2 在极端体积下会 Int 溢出回绕）
+  result.sort_by(fn(a, b) {
+    if a.2 > b.2 {
+      1
+    } else if a.2 < b.2 {
+      -1
+    } else {
+      0
+    }
+  })
   result
 }
 
 ///|
-/// 取 top 5 体积包
+/// 取 top N 体积包（N = top_offenders_n，与序列化字段 size_offenders_top5 对应）
 fn compute_size_offenders(graph : Graph, metas : Map[String, NodeMeta]) -> Array[(String, Int, Int)] {
   let all = compute_transitive_sizes(graph, metas)
   let top : Array[(String, Int, Int)] = []
   let mut i = 0
-  while i < all.length() && i < 5 {
+  while i < all.length() && i < top_offenders_n {
     top.push(all[i])
     i = i + 1
   }
