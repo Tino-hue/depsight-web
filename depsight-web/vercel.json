@@ -1,15 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/download/[...path].ts": { "maxDuration": 30, "memory": 512 },
+    "api/health.ts": { "maxDuration": 5, "memory": 256 }
+  },
   "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET, OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" },
-        { "key": "Cache-Control", "value": "no-store" }
-      ]
-    },
     {
       "source": "/assets/(.*)",
       "headers": [
@@ -22,7 +17,10 @@
     {
       "source": "/(favicon\\.svg|icons\\.svg|og\\.png|depsight\\.wasm|demo\\.mp4)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, must-revalidate"
+        }
       ]
     },
     {
