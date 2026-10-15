@@ -1,5 +1,5 @@
 // 分析历史面板：回看 / 分享 / 删除（数据存 localStorage，AppContext 统一管理）
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link2, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,15 @@ export function HistoryPanel() {
   const { history, lastGraph, applyResult, removeHistory, copyShareUrl } =
     useApp();
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [failedId, setFailedId] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
+
+  // 卸载时清理待触发的提示 timer，避免回写已卸载组件
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   if (history.length === 0) return null;
 
@@ -25,9 +34,22 @@ export function HistoryPanel() {
     const entry = history.find((e) => e.id === id);
     if (!entry) return;
     const ok = await copyShareUrl(entry.result);
+    if (timerRef.current) clearTimeout(timerRef.current);
     if (ok) {
+      setFailedId(null);
       setCopiedId(id);
-      setTimeout(() => setCopiedId((cur) => (cur === id ? null : cur)), 1500);
+      timerRef.current = window.setTimeout(
+        () => setCopiedId((cur) => (cur === id ? null : cur)),
+        1500,
+      );
+    } else {
+      // 复制失败反馈：与 copiedId 互斥，红色文案展示 2s
+      setCopiedId(null);
+      setFailedId(id);
+      timerRef.current = window.setTimeout(
+        () => setFailedId((cur) => (cur === id ? null : cur)),
+        2000,
+      );
     }
   };
 
@@ -87,6 +109,9 @@ export function HistoryPanel() {
                 </Button>
                 {copiedId === e.id && (
                   <span className="text-xs text-emerald-500">Copied</span>
+                )}
+                {failedId === e.id && (
+                  <span className="text-xs text-red-500">Copy failed</span>
                 )}
               </li>
             );

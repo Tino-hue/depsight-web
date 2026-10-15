@@ -9,23 +9,16 @@ interface Feature3DProps {
   className?: string;
 }
 
-/** 生成球体渐变贴图（左上受光、右下暗部），让纯色球有体积感 */
-function makeSphereTexture(isDark: boolean): THREE.CanvasTexture {
+/** 生成球体渐变贴图（左上受光、右下暗部），让纯色球有体积感（深浅色同一套绿色色标） */
+function makeSphereTexture(): THREE.CanvasTexture {
   const c = document.createElement("canvas");
   c.width = c.height = 128;
   const ctx = c.getContext("2d")!;
   const g = ctx.createRadialGradient(48, 44, 8, 64, 64, 72);
-  if (isDark) {
-    g.addColorStop(0, "#86ffb0");
-    g.addColorStop(0.35, "#4ade80");
-    g.addColorStop(0.75, "#16a34a");
-    g.addColorStop(1, "#052e12");
-  } else {
-    g.addColorStop(0, "#86ffb0");
-    g.addColorStop(0.35, "#4ade80");
-    g.addColorStop(0.75, "#16a34a");
-    g.addColorStop(1, "#052e12");
-  }
+  g.addColorStop(0, "#86ffb0");
+  g.addColorStop(0.35, "#4ade80");
+  g.addColorStop(0.75, "#16a34a");
+  g.addColorStop(1, "#052e12");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 128, 128);
   return new THREE.CanvasTexture(c);
@@ -107,7 +100,7 @@ export function Feature3D({ theme, className }: Feature3DProps) {
     // 内核实心球（微弱发光感）
     const innerGeo = new THREE.SphereGeometry(0.52, 24, 24);
     const innerMat = new THREE.MeshStandardMaterial({
-      color: isDark ? "#052e12" : "#052e12",
+      color: "#052e12",
       emissive: isDark ? "#22c55e" : "#4ade80",
       emissiveIntensity: isDark ? 0.4 : 0.28,
       roughness: 0.3,
@@ -117,7 +110,7 @@ export function Feature3D({ theme, className }: Feature3DProps) {
     scene.add(inner);
 
     // ---------- 外围球节点（渐变贴图 + 名称标签） ----------
-    const sphereTex = makeSphereTexture(isDark);
+    const sphereTex = makeSphereTexture();
     const nodeGeo = new THREE.SphereGeometry(0.17, 28, 28);
     const nodeBaseMat = new THREE.MeshStandardMaterial({
       map: sphereTex,

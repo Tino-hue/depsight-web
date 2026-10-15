@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useFetcher } from "@/hooks/useFetcher";
 import { useApp } from "@/state/AppContext";
+import { MAX_MOD_TEXT_BYTES as MAX_UPLOAD_BYTES } from "@/lib/wasm-loader";
 import { cn } from "@/lib/utils";
 
 type InputTab = "text" | "file" | "package";
@@ -51,8 +52,7 @@ export function AnalyzeView() {
       return;
     }
     setStatus(okText);
-    // 与旧版一致：分析完成后自动切到 graph 视图
-    setView("graph");
+    // 用户决策：分析成功后停留在 Analyze 视图，由用户自行点「View dependency graph」切换
   };
 
   const onAnalyze = async () => {
@@ -84,12 +84,11 @@ export function AnalyzeView() {
         setStatus("Fetching dependencies from mooncakes.io…");
         let ctx;
         try {
-          ctx = await fetcher.fetchContext(
-            name,
-            packageVersion.trim() || null,
-          );
+          ctx = await fetcher.fetchContext(name, packageVersion.trim() || null);
         } catch (e) {
-          setStatus(`Fetch failed: ${e instanceof Error ? e.message : String(e)}`);
+          setStatus(
+            `Fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
           return;
         }
         if (!ctx) {
@@ -110,6 +109,12 @@ export function AnalyzeView() {
   const onFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // 与 WASM 侧单 mod 文本上限（1MB）对齐，超限直接拦截不读入
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setStatus("文件过大（上限 1MB）");
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       setModText(String(reader.result || ""));
@@ -239,7 +244,8 @@ export function AnalyzeView() {
                 "workbench-status",
                 (status.startsWith("Analysis failed") ||
                   status.startsWith("Fetch failed") ||
-                  status.startsWith("Failed to read file")) &&
+                  status.startsWith("Failed to read file") ||
+                  status.startsWith("文件过大")) &&
                   "is-error",
               )}
             >

@@ -44,6 +44,10 @@ class GraphEngine {
   private edgeGroup: THREE.Group | null = null;
   private nodeMeshes: NodeEntry[] = [];
   private edgeLines: THREE.Line[] = [];
+  // 拾取复用的网格数组：mousemove 高频触发，避免每次事件都 new Array 全量重建
+  private pickMeshes: NodeEntry["mesh"][] = [];
+  private pickPending = false;
+  private pickDirty = false;
   private pulseNodes: PulseEntry[] = [];
   private highlightNodes = new Set<string>();
   private animationId = 0;
@@ -55,6 +59,8 @@ class GraphEngine {
     text: string;
   }[] = [];
   private ambientLight!: THREE.AmbientLight;
+  // 布局随机源：构建图时以确定性种子初始化，同一张图每次渲染布局一致
+  private rng: () => number = Math.random;
   onSelect: ((info: SelectedNodeInfo | null) => void) | null = null;
 
   constructor(container: HTMLElement, isLight: boolean) {
@@ -106,6 +112,14 @@ class GraphEngine {
     this.clearGraph();
 
     const { nodes, edges } = graphData;
+
+    // 布局种子：节点数 + 根节点 id 的确定性散列，同一张图每次渲染布局一致（可复现）
+    const rootId = nodes[0]?.id ?? "";
+    let seed = nodes.length >>> 0;
+    for (let i = 0; i < rootId.length; i++) {
+      seed = (Math.imul(seed, 31) + rootId.charCodeAt(i)) >>> 0;
+    }
+    this.rng = mulberry32(seed);
     const healthMap = new Map<string, number>();
     const metaMap = new Map<string, AnalysisResult["node_metas"][string]>();
 
@@ -127,7 +141,7 @@ class GraphEngine {
     this.nodeGroup = new THREE.Group();
     const nodePositions = new Map<string, THREE.Vector3>();
 
-    for (const node of nodes) {
+    for (const [index, node] of nodes.entries()) {
       const score = healthMap.get(node.id) ?? 50;
       const meta = metaMap.get(node.id);
       const childCount = childrenCount.get(node.id) || 0;
@@ -139,7 +153,7 @@ class GraphEngine {
       const radius = 3 + sizeBonus + sizeBonus2;
 
       const color = getHealthColor(score);
-      const pos = computeNodePosition(node.depth || 0);
+      const pos = computeNodePosition(node.depth || 0, this.rng);
 
       const geometry = new THREE.SphereGeometry(radius, 24, 24);
       const material = new THREE.MeshPhongMaterial({
@@ -160,7 +174,11 @@ class GraphEngine {
       nodePositions.set(node.id, pos);
 
       if (score < 50) {
-        this.pulseNodes.push({ mesh, phase: Math.random() * Math.PI * 2 });
+        // 脉冲相位基于节点 index 的确定性值（黄金角 2.399963），替代 Math.random
+        this.pulseNodes.push({
+          mesh,
+          phase: (index * 2.399963) % (Math.PI * 2),
+        });
       }
 
       // 精灵标签
@@ -173,6 +191,8 @@ class GraphEngine {
       this.labels.push(label);
     }
     this.scene.add(this.nodeGroup);
+    // 拾取数组随数据重建，mousemove/click 共用避免每次 new Array
+    this.pickMeshes = this.nodeMeshes.map((n) => n.mesh);
 
     // 边
     this.edgeGroup = new THREE.Group();
@@ -250,6 +270,8 @@ class GraphEngine {
     );
     this.clearGraph();
     this.renderer.dispose();
+    // 主动丢失 WebGL 上下文，加速 GPU 资源回收（反复进出图视图时不累积上下文）
+    this.renderer.forceContextLoss();
     this.container.removeChild(this.renderer.domElement);
   }
 
@@ -295,8 +317,13 @@ class GraphEngine {
         if (obj instanceof THREE.Mesh || obj instanceof THREE.Sprite) {
           obj.geometry?.dispose?.();
           const mat = obj.material as THREE.Material | THREE.Material[];
-          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-          else mat?.dispose?.();
+          // Sprite 标签的 CanvasTexture 贴图需随 material 一起释放，否则显存泄漏
+          const disposeMat = (m: THREE.Material) => {
+            (m as THREE.SpriteMaterial).map?.dispose?.();
+            m.dispose();
+          };
+          if (Array.isArray(mat)) mat.forEach(disposeMat);
+          else if (mat) disposeMat(mat);
         }
       });
       this.scene.remove(this.nodeGroup);
@@ -314,11 +341,16 @@ class GraphEngine {
     this.edgeLines = [];
     this.pulseNodes = [];
     this.labels = [];
+    this.pickMeshes = [];
     this.highlightNodes.clear();
   }
 
   private fitCamera(nodeCount: number) {
     const dist = Math.max(80, nodeCount * 12);
+    // 远平面随图规模动态计算：相机到原点距离 ≈ 1.233·dist，
+    // 固定 far=1000 会在 nodeCount ≥ 67 时把整个场景裁剪掉（黑屏）
+    this.camera.far = Math.max(2000, dist * 4);
+    this.camera.updateProjectionMatrix();
     this.camera.position.set(dist * 0.6, dist * 0.4, dist);
     this.controls.target.set(0, 0, 0);
     this.controls.update();
@@ -353,8 +385,7 @@ class GraphEngine {
   private onCanvasClick = (event: MouseEvent) => {
     this.setMouseFromEvent(event);
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    const meshes = this.nodeMeshes.map((n) => n.mesh);
-    const intersects = this.raycaster.intersectObjects(meshes, false);
+    const intersects = this.raycaster.intersectObjects(this.pickMeshes, false);
     if (intersects.length > 0) {
       const obj = intersects[0].object as NodeEntry["mesh"];
       const entry = this.nodeMeshes.find((n) => n.mesh === obj);
@@ -364,11 +395,22 @@ class GraphEngine {
 
   private onCanvasMouseMove = (event: MouseEvent) => {
     this.setMouseFromEvent(event);
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const meshes = this.nodeMeshes.map((n) => n.mesh);
-    const intersects = this.raycaster.intersectObjects(meshes, false);
-    this.renderer.domElement.style.cursor =
-      intersects.length > 0 ? "pointer" : "grab";
+    // 节流到每帧最多一次 raycast：mousemove 高频触发，直接拾取会造成长任务卡顿
+    this.pickDirty = true;
+    if (this.pickPending) return;
+    this.pickPending = true;
+    requestAnimationFrame(() => {
+      this.pickPending = false;
+      if (this.disposed || !this.pickDirty) return;
+      this.pickDirty = false;
+      this.raycaster.setFromCamera(this.mouse, this.camera);
+      const intersects = this.raycaster.intersectObjects(
+        this.pickMeshes,
+        false,
+      );
+      this.renderer.domElement.style.cursor =
+        intersects.length > 0 ? "pointer" : "grab";
+    });
   };
 
   private onWindowResize = () => {
@@ -411,11 +453,23 @@ function getHealthColor(score: number): THREE.Color {
   return new THREE.Color(0xef4444);
 }
 
-function computeNodePosition(depth: number): THREE.Vector3 {
-  const angle = Math.random() * Math.PI * 2;
-  const phi = Math.acos(2 * Math.random() - 1);
+/** mulberry32 PRNG：种子确定则序列确定，用于可复现的图布局 */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function computeNodePosition(depth: number, rng: () => number): THREE.Vector3 {
+  const angle = rng() * Math.PI * 2;
+  const phi = Math.acos(2 * rng() - 1);
   const baseRadius = 20 + depth * 25;
-  const jitter = 0.7 + Math.random() * 0.6;
+  const jitter = 0.7 + rng() * 0.6;
   const r = baseRadius * jitter;
   return new THREE.Vector3(
     r * Math.sin(phi) * Math.cos(angle),

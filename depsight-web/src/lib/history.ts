@@ -46,16 +46,23 @@ export function loadHistory(): HistoryEntry[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return [];
     return Object.values(parsed)
-      .filter(
-        (v): v is HistoryEntry =>
-          !!v &&
-          typeof v === "object" &&
-          typeof (v as HistoryEntry).id === "string" &&
-          typeof (v as HistoryEntry).ts === "number" &&
-          typeof (v as HistoryEntry).result === "object",
-      )
+      .filter((v): v is HistoryEntry => {
+        if (!v || typeof v !== "object") return false;
+        const e = v as Partial<HistoryEntry>;
+        const r = e.result;
+        // typeof null === "object"，result 必须非空且带 graph/overall_score 字段
+        return (
+          typeof e.id === "string" &&
+          typeof e.ts === "number" &&
+          typeof r === "object" &&
+          r !== null &&
+          typeof (r as Partial<AnalysisResult>).graph === "object" &&
+          typeof (r as Partial<AnalysisResult>).overall_score === "number"
+        );
+      })
       .sort((a, b) => b.ts - a.ts);
   } catch {
     return [];
@@ -147,10 +154,13 @@ export async function encodeSharePayload(
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** 解析 #share= payload，返回分析结果；非法返回 null */
+/** 解析 #share= payload，返回分析结果；非法或超限返回 null */
 export async function decodeSharePayload(
   payload: string,
 ): Promise<AnalysisResult | null> {
+  // 大小上限：payload 为 base64url（4/3 膨胀），128KB 上限对应原始压缩数据约 96KB
+  const SHARE_PAYLOAD_MAX_CHARS = 128 * 1024;
+  if (payload.length > SHARE_PAYLOAD_MAX_CHARS) return null;
   try {
     const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
     const bin = atob(b64);
@@ -159,8 +169,21 @@ export async function decodeSharePayload(
     const ds = new DecompressionStream("deflate-raw");
     const stream = new Blob([bytes]).stream().pipeThrough(ds);
     const text = await new Response(stream).text();
+    // 解压后大小复查，防 zip bomb 类攻击
+    if (text.length > SHARE_PAYLOAD_MAX_CHARS * 4) return null;
     const result = JSON.parse(text) as AnalysisResult;
-    if (!result || typeof result.overall_score !== "number") return null;
+    // 结构校验：必需字段齐全且类型正确
+    if (
+      !result ||
+      typeof result !== "object" ||
+      !Number.isFinite(result.overall_score) ||
+      typeof result.node_count !== "number" ||
+      !Array.isArray(result.health_scores) ||
+      !Array.isArray(result.diagnostics) ||
+      typeof result.graph !== "object" ||
+      result.graph === null
+    )
+      return null;
     return result;
   } catch {
     return null;

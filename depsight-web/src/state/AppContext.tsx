@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -104,7 +105,7 @@ interface AppContextValue {
   analyzeModText: (modText: string) => AnalysisResult;
   analyzeFromContext: (context: AnalysisContext) => AnalysisResult;
   /** 应用分析结果（写全局状态 + 记录趋势），返回是否成功 */
-  applyResult: (result: AnalysisResult) => boolean;
+  applyResult: (result: AnalysisResult | null) => boolean;
   // 全局数据
   lastResult: AnalysisResult | null;
   lastGraph: DepGraph | null;
@@ -169,7 +170,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       window.history.replaceState(null, "", "#analyze");
     }
     // 离开 404 视图时把非根路径重置回 /，避免 /foo#hero 这类脏 URL 刷新再次 404
-    if (view !== "404" && !/^\/(index\.html)?$/.test(window.location.pathname)) {
+    if (
+      view !== "404" &&
+      !/^\/(index\.html)?$/.test(window.location.pathname)
+    ) {
       window.history.replaceState(null, "", "/");
     }
     const target = view === "hero" ? "#hero" : `#${view}`;
@@ -192,6 +196,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [lastRootMod, setLastRootMod] = useState<ParsedMod | null>(null);
   const [trends, setTrends] = useState<TrendMap>(loadStoredTrends);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+  // history/trends 的 ref 镜像：applyResult 需基于最新值计算 next 并持久化，
+  // useCallback([]) 闭包中的 state 是首渲染快照，故用镜像 ref 拿最新值；
+  // 这样 setState updater 只做纯数组更新，持久化副作用移到 updater 外（StrictMode 双调用安全）
+  const historyRef = useRef<HistoryEntry[]>(history);
+  const trendsRef = useRef<TrendMap>(trends);
 
   // 启动时恢复最近一次分析（刷新不丢）；#share= 优先（外部分享链接）
   // initialHash 经 useState 初始捕获后不可变，仅需首次执行一次
@@ -207,7 +216,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
-    const entries = loadHistory();
+    // 复用 useState 初始化时的 historyRef 镜像，避免启动时第二次 loadHistory 重复读盘
+    const entries = historyRef.current;
     const latest = entries[0];
     if (latest) {
       // oxlint-disable-next-line react/set-state-in-effect
@@ -220,43 +230,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [initialHash]);
 
-  const applyResult = useCallback((result: AnalysisResult): boolean => {
-    if (result.error) return false;
+  const applyResult = useCallback((result: AnalysisResult | null): boolean => {
+    // 空值早退：坏数据/中断写入可能产生 null result，避免下游 setLastGraph(null.graph) 抛错
+    if (!result || typeof result !== "object" || result.error) return false;
     setLastResult(result);
     setLastGraph(result.graph);
     setLastRootMod(result._root_mod ?? null);
 
-    // 持久化分析历史（localStorage）
+    // 持久化分析历史（localStorage）：用镜像 ref 计算 next，updater 外执行 save
     const entry = makeEntry(result, "analysis");
-    setHistory((prev) => {
-      const next = [entry, ...prev];
-      saveHistory(next);
-      return next;
-    });
+    const nextHistory = [entry, ...historyRef.current];
+    historyRef.current = nextHistory;
+    setHistory(nextHistory);
+    saveHistory(nextHistory);
 
     // 记录趋势：同一天去重（与 js/trends.js recordTrend 一致）
     const root = result._root_mod;
     if (root && root.name) {
-      setTrends((prev) => {
-        const next: TrendMap = { ...prev };
-        const arr: TrendPoint[] = [...(next[root.name] ?? [])];
-        const today = new Date().toISOString().slice(0, 10);
-        const idx = arr.findIndex((p) => p.date === today);
-        if (idx >= 0) {
-          arr[idx] = { ...arr[idx], score: result.overall_score };
-        } else {
-          arr.push({ date: today, score: result.overall_score });
-        }
-        next[root.name] = arr;
-        saveStoredTrends(next);
-        return next;
-      });
+      const nextTrends: TrendMap = { ...trendsRef.current };
+      const arr: TrendPoint[] = [...(nextTrends[root.name] ?? [])];
+      const today = new Date().toISOString().slice(0, 10);
+      const idx = arr.findIndex((p) => p.date === today);
+      if (idx >= 0) {
+        arr[idx] = { ...arr[idx], score: result.overall_score };
+      } else {
+        arr.push({ date: today, score: result.overall_score });
+      }
+      nextTrends[root.name] = arr;
+      trendsRef.current = nextTrends;
+      setTrends(nextTrends);
+      saveStoredTrends(nextTrends);
     }
     return true;
   }, []);
 
   const removeHistory = useCallback((id: string) => {
-    setHistory(removeHistoryEntry(id));
+    const next = removeHistoryEntry(id);
+    historyRef.current = next;
+    setHistory(next);
   }, []);
 
   // 生成可分享链接：结果 JSON → deflate → base64url → #share=<payload>
@@ -283,8 +294,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [createShareUrl],
   );
 
+  // AI 任务 id 用单调递增序号：Date.now() 同毫秒会撞 id，AiDrawer 去重依赖唯一 id
+  const aiSeqRef = useRef(0);
   const requestAi = useCallback((task: Omit<AiTask, "id">) => {
-    setAiTask({ ...task, id: Date.now() });
+    setAiTask({ ...task, id: ++aiSeqRef.current });
     setAiOpen(true);
   }, []);
 
