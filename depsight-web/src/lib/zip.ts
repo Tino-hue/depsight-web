@@ -6,6 +6,10 @@ const EOCD_SIG = 0x06054b50;
 const CDFH_SIG = 0x02014b50;
 const LFH_SIG = 0x04034b50;
 
+// zip bomb 防护：单条目解压上限 8MB，全包解压总量上限 64MB
+export const ZIP_MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+export const ZIP_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+
 interface ZipEntryRef {
   method: number;
   compSize: number;
@@ -39,11 +43,18 @@ export async function extractZipEntryText(
       throw new Error("Invalid zip: bad CDFH signature");
     const method = view.getUint16(p + 10, true);
     const compSize = view.getUint32(p + 20, true);
+    const uncompSize = view.getUint32(p + 24, true);
     const nameLen = view.getUint16(p + 28, true);
     const extraLen = view.getUint16(p + 30, true);
     const commentLen = view.getUint16(p + 32, true);
     const localOff = view.getUint32(p + 42, true);
     const fileName = decoder.decode(buf.subarray(p + 46, p + 46 + nameLen));
+
+    // zip bomb 防护：超过单条目上限的直接跳过（目标文件均为小文本，跳过不影响正确性）
+    if (uncompSize > ZIP_MAX_ENTRY_BYTES) {
+      p += 46 + nameLen + extraLen + commentLen;
+      continue;
+    }
 
     const isTarget =
       !fileName.endsWith("/") && fileName.split("/").pop() === entryName;
@@ -105,6 +116,7 @@ export function listZipEntries(buf: Uint8Array<ArrayBuffer>): ZipEntryInfo[] {
   const count = view.getUint16(eocd + 10, true);
   let p = view.getUint32(eocd + 16, true);
   const out: ZipEntryInfo[] = [];
+  let totalUncomp = 0;
   for (let i = 0; i < count; i++) {
     if (view.getUint32(p, true) !== CDFH_SIG)
       throw new Error("Invalid zip: bad CDFH signature");
@@ -117,6 +129,10 @@ export function listZipEntries(buf: Uint8Array<ArrayBuffer>): ZipEntryInfo[] {
     const localOff = view.getUint32(p + 42, true);
     const name = decoder.decode(buf.subarray(p + 46, p + 46 + nameLen));
     if (!name.endsWith("/")) {
+      // zip bomb 防护：累计解压总量超限直接拒绝
+      totalUncomp += uncompSize;
+      if (totalUncomp > ZIP_MAX_TOTAL_BYTES)
+        throw new Error("Invalid zip: total uncompressed size exceeds limit");
       out.push({ name, compSize, uncompSize, method, localOff });
     }
     p += 46 + nameLen + extraLen + commentLen;

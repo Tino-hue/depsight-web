@@ -238,7 +238,11 @@ export function TrendsView() {
     () => (current ? (allTrends[current] ?? []) : []),
     [current, allTrends],
   );
-  const points = rawPoints;
+  // localStorage 脏数据防护：过滤分数非有限数的点，避免 NaN/Infinity 污染统计与折线绘制
+  const points = useMemo(
+    () => rawPoints.filter((p) => Number.isFinite(p.score)),
+    [rawPoints],
+  );
 
   // 重绘（ResizeObserver：视图从 hidden 切回可见时 wrap 宽度 0→实际值，需补绘）
   useEffect(() => {

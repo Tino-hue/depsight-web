@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 
 import type { WasmInitResult, WasmStatus } from '@/lib/types'
-import { initWasm } from '@/lib/wasm-loader'
+import { initWasm, onWasmDisabled } from '@/lib/wasm-loader'
 
 interface UseWasmReturn {
   status: WasmStatus
@@ -21,8 +21,14 @@ export function useWasm(): UseWasmReturn {
       setWasm(result)
       setStatus(result.status)
     })
+    // 运行时被禁用（如连续失败熔断）：徽章实时切到 fallback，无需等下次刷新
+    const unsubscribe = onWasmDisabled(() => {
+      if (cancelled) return
+      setStatus('fallback')
+    })
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [])
 

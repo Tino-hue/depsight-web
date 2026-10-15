@@ -1,12 +1,12 @@
 // 落地首页：depsight 品牌 Hero
-// 版式借鉴单视口 landing：垂直居中 copy、WarpText 液态扭曲、三统计栏
+// 版式借鉴单视口 landing：垂直居中 copy、ParticleText 粒子聚合标题、三统计栏
 // 风格：纯黑底 + 品牌绿点缀，全英文
 import { useEffect, useRef } from "react";
 
 import { useApp } from "@/state/AppContext";
 import { cn } from "@/lib/utils";
 import { LandingSections } from "@/components/LandingSections";
-import { WarpText } from "@/components/ui/warp-text";
+import { ParticleText } from "@/components/ui/ParticleText";
 import { ShinyButton } from "@/components/ui/shiny-button";
 import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
 import { GlyphMatrix } from "@/components/ui/glyph-matrix";
@@ -244,24 +244,48 @@ export function HeroView() {
               </div>
             </Appear>
 
-            {/* H1：WarpText WebGL 液态扭曲悬停效果 */}
+            {/* H1：ParticleText Canvas 粒子聚合效果（两行，主次分层） */}
             <h1 className="hero-h1">
-              <WarpText
-                text={"Scan dependency risk\nacross your MoonBit stack."}
+              <ParticleText
+                text="Scan dependency risk"
+                particleSize={2}
+                density={4}
                 color={theme === "dark" ? "#ffffff" : "#1a1f2e"}
-                warpStrength={0.1}
-                warpScale={1.8}
-                speed={0.5}
-                pointerInfluence={0.45}
-                pointerStrength={0.42}
-                refraction={0.02}
-                ripple={true}
-                fontSize="clamp(2.5rem, 6vw, 5.5rem)"
+                highlightColor="#08eb09"
+                scatter={180}
+                gatherDuration={1600}
+                stagger={420}
+                pointerRepel={40}
+                repelRadius={120}
+                idleDrift={0.7}
+                trigger="mount"
+                fontSize="clamp(3rem, 8vw, 7rem)"
                 fontWeight={500}
                 fontFamily="Sora, system-ui, sans-serif"
-                letterSpacing="-0.04em"
-                lineHeight={1.1}
-                style={{ height: "clamp(180px, 30vw, 320px)" }}
+                glow
+                style={{ height: "clamp(88px, 13vw, 150px)" }}
+              />
+              <ParticleText
+                text="across your MoonBit stack."
+                particleSize={1.6}
+                density={3}
+                color={theme === "dark" ? "#ffffff" : "#1a1f2e"}
+                highlightColor="#08eb09"
+                scatter={120}
+                gatherDuration={1400}
+                stagger={320}
+                pointerRepel={32}
+                repelRadius={100}
+                idleDrift={0.7}
+                trigger="mount"
+                fontSize="clamp(1.5rem, 4.5vw, 3.2rem)"
+                fontWeight={500}
+                fontFamily="Sora, system-ui, sans-serif"
+                glow
+                style={{
+                  height: "clamp(46px, 7vw, 86px)",
+                  marginTop: "20px",
+                }}
               />
             </h1>
 

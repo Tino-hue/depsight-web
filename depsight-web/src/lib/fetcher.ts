@@ -20,7 +20,12 @@ import type {
   NodeMetaInput,
   ParsedMod,
 } from "./types";
-import { extractZipEntryText, listZipEntries, inflateEntryRaw } from "./zip";
+import {
+  extractZipEntryText,
+  listZipEntries,
+  inflateEntryRaw,
+  ZIP_MAX_ENTRY_BYTES,
+} from "./zip";
 
 const API_BASE = "https://mooncakes.io/api/v0";
 
@@ -185,6 +190,48 @@ async function fetchWithTimeout(
   }
 }
 
+// zip 下载体积上限：超过直接拒绝，防止恶意/异常大包撑爆内存
+const MAX_ZIP_DOWNLOAD_BYTES = 64 * 1024 * 1024;
+
+// 读取下载响应体：预检 content-length，读完后复查实际字节数
+async function readResponseBytes(
+  resp: Response,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const declared = Number(resp.headers.get("content-length") ?? "0");
+  if (declared > MAX_ZIP_DOWNLOAD_BYTES)
+    throw new Error(`zip too large: content-length ${declared}`);
+  const buf = new Uint8Array(await resp.arrayBuffer());
+  if (buf.byteLength > MAX_ZIP_DOWNLOAD_BYTES)
+    throw new Error(`zip too large: ${buf.byteLength} bytes`);
+  return buf;
+}
+
+// ===== zip 字节共享下载层 =====
+// 同一 name@version 的发布 zip 在同一时刻只下载一次：mod.json / LICENSE / 源码统计
+// 三个入口都从共享的在飞 Promise 取字节（N+1 场景下同一 zip 原本要重复下载 3 次）
+const zipInFlight = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
+
+/** 下载 name@version 的发布 zip 字节；同 key 在飞请求自动共享，失败抛异常由调用方兜底 */
+function fetchZipBytes(
+  name: string,
+  version: string,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const key = `${name}@${version}`;
+  const pending = zipInFlight.get(key);
+  if (pending) return pending;
+
+  const task = (async () => {
+    const resp = await fetchWithTimeout(downloadUrl(name, version), 60000);
+    if (!resp.ok) throw new Error(`zip HTTP ${resp.status}`);
+    return readResponseBytes(resp);
+  })();
+
+  zipInFlight.set(key, task);
+  return task.finally(() => {
+    zipInFlight.delete(key);
+  });
+}
+
 // ===== 全量模块列表（供真实搜索；sessionStorage 缓存 30 分钟）=====
 let modulesCache: MooncakesModule[] | null = null;
 
@@ -326,9 +373,8 @@ async function fetchModJsonFromZip(
   name: string,
   version: string,
 ): Promise<string> {
-  const resp = await fetchWithTimeout(downloadUrl(name, version), 60000);
-  if (!resp.ok) throw new Error(`zip HTTP ${resp.status}`);
-  const buf = new Uint8Array(await resp.arrayBuffer());
+  // 字节获取走共享在飞去重（同 zip 只下载一次），失败抛异常由调用方兜底
+  const buf = await fetchZipBytes(name, version);
   const json = await extractZipEntryText(buf, "moon.mod.json");
   if (json != null) return json;
   const toml = await extractZipEntryText(buf, "moon.mod");
@@ -423,9 +469,8 @@ export async function fetchLicenseText(
 
   const task = (async () => {
     try {
-      const resp = await fetchWithTimeout(downloadUrl(name, version), 60000);
-      if (!resp.ok) return null;
-      const buf = new Uint8Array(await resp.arrayBuffer());
+      // 字节获取走共享在飞去重；zip 不存在/损坏等任何失败保持返回 null 语义
+      const buf = await fetchZipBytes(name, version);
       for (const base of LICENSE_BASENAMES) {
         const text = await extractZipEntryText(buf, base);
         if (text !== null) {
@@ -492,13 +537,25 @@ function writeSourceStatsCache(
   const store = getStorage("local");
   if (!store) return;
   try {
-    const keys = Object.keys(store).filter((k) =>
-      k.startsWith(SOURCE_STATS_PREFIX),
-    );
-    if (keys.length >= SOURCE_STATS_MAX_ENTRIES) {
-      keys
-        .slice(0, keys.length - SOURCE_STATS_MAX_ENTRIES + 1)
-        .forEach((k) => store.removeItem(k));
+    // 条数上限：按 fetchedAt 升序淘汰最旧的一批（与 modText/license 缓存策略一致）
+    const entries: Array<{ key: string; fetchedAt: number }> = [];
+    for (let i = 0; i < store.length; i++) {
+      const k = store.key(i);
+      if (!k?.startsWith(SOURCE_STATS_PREFIX)) continue;
+      try {
+        const { fetchedAt } = JSON.parse(store.getItem(k)!) as {
+          fetchedAt: number;
+        };
+        entries.push({ key: k, fetchedAt });
+      } catch {
+        store.removeItem(k);
+      }
+    }
+    if (entries.length >= SOURCE_STATS_MAX_ENTRIES) {
+      entries
+        .sort((a, b) => a.fetchedAt - b.fetchedAt)
+        .slice(0, entries.length - SOURCE_STATS_MAX_ENTRIES + 1)
+        .forEach((e) => store.removeItem(e.key));
     }
     store.setItem(
       SOURCE_STATS_PREFIX + name + "@" + version,
@@ -528,9 +585,8 @@ export async function fetchSourceStats(
 
   const task = (async (): Promise<SourceStats | null> => {
     try {
-      const resp = await fetchWithTimeout(downloadUrl(name, version), 60000);
-      if (!resp.ok) return null;
-      const buf = new Uint8Array(await resp.arrayBuffer());
+      // 字节获取走共享在飞去重；zip 不存在/损坏等任何失败保持返回 null 语义
+      const buf = await fetchZipBytes(name, version);
       const decoder = new TextDecoder();
       const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
       const entries = listZipEntries(buf);
@@ -540,9 +596,12 @@ export async function fetchSourceStats(
       // MoonBit 公开顶层声明：pub fn / pub let / pub struct / pub enum / pub trait / pub type / pub impl
       const PUB_DECL = /^\s*pub\s+(?:fn|let|struct|enum|trait|type|impl)\b/gm;
 
+      let processed = 0;
       for (const e of entries) {
         const base = e.name.split("/").pop() ?? e.name;
         if (!base.endsWith(".mbt")) continue;
+        // zip bomb 防护：超大条目跳过不解压（统计为 best-effort，跳过不影响正确性）
+        if (e.uncompSize > ZIP_MAX_ENTRY_BYTES) continue;
         // self_size 用 uncompressed size（CDFH offset 24 为 compSize，offset 20 为 uncompSize，
         // listZipEntries 存的是 compSize；这里直接从 central dir 重新读 uncompSize）
         self_size += e.uncompSize;
@@ -556,6 +615,8 @@ export async function fetchSourceStats(
         );
         const matches = text.match(PUB_DECL);
         if (matches) total_api_count += matches.length;
+        // 每处理 8 个文件让出一次事件循环，避免大包解压长任务卡死主线程
+        if (++processed % 8 === 0) await new Promise((r) => setTimeout(r, 0));
       }
 
       const stats: SourceStats = { self_size, total_api_count };

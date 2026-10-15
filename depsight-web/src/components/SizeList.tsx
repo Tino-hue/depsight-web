@@ -8,12 +8,14 @@ export function SizeList({ offenders }: { offenders: SizeOffender[] }) {
     return <p className="text-sm text-muted-foreground">No data yet</p>;
   }
 
-  const max = offenders[0]?.transitive_size || 1;
+  // NaN/Infinity 防护：上游统计失败时 transitive_size 可能非有限，按 0 参与计算
+  const safeSize = (n: number) => (Number.isFinite(n) ? n : 0);
+  const max = Math.max(1, ...offenders.map((o) => safeSize(o.transitive_size)));
 
   return (
     <ul className="space-y-3">
       {offenders.map((o, i) => {
-        const pct = Math.round((o.transitive_size / max) * 100);
+        const pct = Math.round((safeSize(o.transitive_size) / max) * 100);
         return (
           <li key={`${o.node_id}-${i}`} className="space-y-1">
             <div className="flex items-baseline justify-between gap-2 text-xs">
@@ -22,7 +24,9 @@ export function SizeList({ offenders }: { offenders: SizeOffender[] }) {
               </span>
               <span className="shrink-0 tabular-nums text-muted-foreground">
                 self {fmtBytes(o.self_size)} · transitive{" "}
-                {fmtBytes(o.transitive_size)}
+                {Number.isFinite(o.transitive_size)
+                  ? fmtBytes(o.transitive_size)
+                  : "–"}
               </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">

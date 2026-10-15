@@ -24,25 +24,36 @@ const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
 // ===== API 配置（localStorage）=====
+// 隐私模式/禁用存储时 localStorage 访问会抛 SecurityError，统一 try/catch 兜底
 function getApiConfig() {
-  return {
-    apiKey: localStorage.getItem("depsight_openai_key") || "",
-    baseUrl: localStorage.getItem("depsight_openai_base") || DEFAULT_BASE_URL,
-    model: localStorage.getItem("depsight_openai_model") || DEFAULT_MODEL,
-  };
+  try {
+    return {
+      apiKey: localStorage.getItem("depsight_openai_key") || "",
+      baseUrl: localStorage.getItem("depsight_openai_base") || DEFAULT_BASE_URL,
+      model: localStorage.getItem("depsight_openai_model") || DEFAULT_MODEL,
+    };
+  } catch {
+    return { apiKey: "", baseUrl: DEFAULT_BASE_URL, model: DEFAULT_MODEL };
+  }
 }
 
 function saveApiConfig(key: string, base: string, model: string) {
-  if (key) localStorage.setItem("depsight_openai_key", key);
-  else localStorage.removeItem("depsight_openai_key");
-  if (base) localStorage.setItem("depsight_openai_base", base);
-  else localStorage.removeItem("depsight_openai_base");
-  if (model) localStorage.setItem("depsight_openai_model", model);
-  else localStorage.removeItem("depsight_openai_model");
+  try {
+    if (key) localStorage.setItem("depsight_openai_key", key);
+    else localStorage.removeItem("depsight_openai_key");
+    if (base) localStorage.setItem("depsight_openai_base", base);
+    else localStorage.removeItem("depsight_openai_base");
+    if (model) localStorage.setItem("depsight_openai_model", model);
+    else localStorage.removeItem("depsight_openai_model");
+  } catch {
+    // 存储不可用时静默失败：配置仅生效于本次会话
+  }
 }
 
 // ===== LLM 调用 =====
-async function callLLM(prompt: string): Promise<string> {
+const LLM_TIMEOUT = 30000;
+
+async function callLLM(prompt: string, signal?: AbortSignal): Promise<string> {
   const config = getApiConfig();
   if (!config.apiKey) {
     throw new Error(
@@ -50,34 +61,43 @@ async function callLLM(prompt: string): Promise<string> {
     );
   }
 
-  const resp = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a MoonBit dependency health expert. Answer in English and provide concrete, actionable fix suggestions.",
-        },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 1500,
-    }),
-  });
+  // 30s 超时；外部 signal（重发/组件卸载取消）联动超时控制器
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT);
+  signal?.addEventListener("abort", () => ctrl.abort(), { once: true });
+  try {
+    const resp = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a MoonBit dependency health expert. Answer in English and provide concrete, actionable fix suggestions.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+        max_tokens: 1500,
+      }),
+      signal: ctrl.signal,
+    });
 
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`LLM API error: ${resp.status} ${err}`);
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`LLM API error: ${resp.status} ${err}`);
+    }
+
+    const data = await resp.json();
+    return data.choices?.[0]?.message?.content || "";
+  } finally {
+    clearTimeout(timer);
   }
-
-  const data = await resp.json();
-  return data.choices?.[0]?.message?.content || "";
 }
 
 // ===== Prompt 构造（与旧版一致）=====
@@ -420,6 +440,35 @@ export function AiDrawer() {
   const [model, setModel] = useState("");
   const [savedTip, setSavedTip] = useState(false);
   const runningRef = useRef(false);
+  // 在飞 LLM 请求的取消控制器：重发取消上一次，组件卸载时取消
+  const llmAbortRef = useRef<AbortController | null>(null);
+
+  const callLLMWithAbort = useCallback(
+    async (prompt: string): Promise<string> => {
+      llmAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      llmAbortRef.current = ctrl;
+      try {
+        return await callLLM(prompt, ctrl.signal);
+      } finally {
+        if (llmAbortRef.current === ctrl) llmAbortRef.current = null;
+      }
+    },
+    [],
+  );
+
+  // 卸载时取消在飞请求，避免回写已卸载组件
+  useEffect(() => {
+    return () => llmAbortRef.current?.abort();
+  }, []);
+
+  // 保存提示 timer 的 ref 镜像：卸载时清理，避免回写已卸载组件
+  const savedTipTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedTipTimerRef.current) clearTimeout(savedTipTimerRef.current);
+    };
+  }, []);
 
   // 设置回填
   const openSettings = () => {
@@ -435,7 +484,11 @@ export function AiDrawer() {
   const onSaveSettings = () => {
     saveApiConfig(apiKey.trim(), baseUrl.trim(), model.trim());
     setSavedTip(true);
-    setTimeout(() => setSavedTip(false), 2000);
+    if (savedTipTimerRef.current) clearTimeout(savedTipTimerRef.current);
+    savedTipTimerRef.current = window.setTimeout(
+      () => setSavedTip(false),
+      2000,
+    );
   };
 
   const runDiagnose = useCallback(
@@ -462,7 +515,7 @@ export function AiDrawer() {
         let body: string;
         let isFallback = false;
         try {
-          body = await callLLM(prompt);
+          body = await callLLMWithAbort(prompt);
         } catch (e) {
           console.warn("[ai] LLM 不可用，使用规则引擎 fallback:", e);
           body = ruleBasedDiagnosis(code, nodeId, diag, meta);
@@ -479,7 +532,7 @@ export function AiDrawer() {
         runningRef.current = false;
       }
     },
-    [lastResult, lastRootMod],
+    [lastResult, lastRootMod, callLLMWithAbort],
   );
 
   const runAll = useCallback(async () => {
@@ -492,7 +545,7 @@ export function AiDrawer() {
     try {
       const prompt = buildFullReportPrompt(lastResult, lastRootMod);
       try {
-        const body = await callLLM(prompt);
+        const body = await callLLMWithAbort(prompt);
         setContent({
           kind: "result",
           title: "Full Diagnosis",
@@ -512,7 +565,7 @@ export function AiDrawer() {
     } finally {
       runningRef.current = false;
     }
-  }, [lastResult, lastRootMod]);
+  }, [lastResult, lastRootMod, callLLMWithAbort]);
 
   const runPr = useCallback(async () => {
     if (!lastResult || runningRef.current) return;
@@ -524,7 +577,7 @@ export function AiDrawer() {
     try {
       const prompt = buildPrPrompt(lastResult, lastRootMod);
       try {
-        const body = await callLLM(prompt);
+        const body = await callLLMWithAbort(prompt);
         setContent({
           kind: "result",
           title: "PR Description",
@@ -544,7 +597,7 @@ export function AiDrawer() {
     } finally {
       runningRef.current = false;
     }
-  }, [lastResult, lastRootMod]);
+  }, [lastResult, lastRootMod, callLLMWithAbort]);
 
   // 响应全局 AI 任务
   const lastTaskIdRef = useRef<number | null>(null);

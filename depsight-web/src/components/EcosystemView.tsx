@@ -57,13 +57,13 @@ function buildEcosystemFromModules(modules: MooncakesModule[]): EcosystemData {
     "0-49": 0,
   };
 
-  /** 与引擎 activity_score 一致的天数分档 */
+  /** 与引擎 activity_score 一致的天数分档（对齐 analyzer.ts scoreActivity / scoring.mbt） */
   function activityScore(days: number): number {
-    if (days <= 30) return 100;
-    if (days <= 90) return 90;
-    if (days <= 180) return 75;
-    if (days <= 365) return 60;
-    return 30;
+    if (days < 30) return 100;
+    if (days < 90) return 90;
+    if (days < 180) return 70;
+    if (days < 365) return 40;
+    return 10;
   }
 
   for (const m of modules) {
