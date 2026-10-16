@@ -1,138 +1,141 @@
 # Depsight
 
-MoonBit 依赖健康分析工具 — 在过期依赖进入生产环境前，帮你发现风险。
+Dependency-health analysis for MoonBit — surface risky dependencies before they reach production.
 
-在线体验: [depsight.xruoyu.xyz](https://depsight.xruoyu.xyz/)
+Live demo: [depsight.xruoyu.xyz](https://depsight.xruoyu.xyz/)
 
-![Depsight 首页](../docs/images/hero.png)
+![Depsight landing page](../docs/images/hero.png)
 
-## 产品预览
+## Product preview
 
-| 依赖分析仪表盘（评分 + 风险清单）   | 3D 依赖图（体积/健康分映射）    |
-| ----------------------------------- | ------------------------------- |
-| ![分析](../docs/images/analyze.png) | ![图](../docs/images/graph.png) |
+| Analysis dashboard (score + risk list)  | 3D dependency graph (size / health mapping) |
+| --------------------------------------- | ------------------------------------------- |
+| ![Analysis](../docs/images/analyze.png) | ![Graph](../docs/images/graph.png)          |
 
-| 健康分趋势追踪                     | 生态看板（mooncakes.io 全量统计）     |
-| ---------------------------------- | ------------------------------------- |
-| ![趋势](../docs/images/trends.png) | ![生态](../docs/images/ecosystem.png) |
+| Health score trends                  | Ecosystem dashboard (full mooncakes.io stats) |
+| ------------------------------------ | --------------------------------------------- |
+| ![Trends](../docs/images/trends.png) | ![Ecosystem](../docs/images/ecosystem.png)    |
 
-## 功能
+## Features
 
-| 模块          | 说明                                                                                                     |
-| ------------- | -------------------------------------------------------------------------------------------------------- |
-| **依赖分析**  | 粘贴 `moon.mod` 文本、上传文件、或输入包名@版本，自动展开完整依赖图                                      |
-| **健康评分**  | 0-100 综合评分，五维度加权：新鲜度 25%、合规 20%、废弃密度 25%、体积 20%、活跃度 10%                     |
-| **风险诊断**  | YANKED-001 / OUTDATED-001 / LICENSE-001 / DEPRECATED-001 / SIZE-001 / ACTIVITY-001 / DUP-001 / CYCLE-001 |
-| **3D 依赖图** | three.js 力导向图，节点大小映射体积，颜色映射健康分，支持搜索聚焦与依赖路径高亮                          |
-| **趋势追踪**  | localStorage 记录历史评分变化，Canvas 手绘折线图                                                         |
-| **生态看板**  | mooncakes.io 全量包分析：许可证分布、活跃/停滞包统计、风险类型计数                                       |
-| **AI 诊断**   | 接入任意 OpenAI 兼容 API，单风险诊断 / 全量报告 / 生成修复 PR；无 API 时内置规则引擎降级                 |
-| **结果分享**  | 分析结果编码为 `#share=<payload>` URL，接收方无需重新分析                                                |
+| Module                  | Description                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Dependency analysis** | Paste `moon.mod` text, upload a file, or type `name@version`; the full dependency graph is expanded automatically                   |
+| **Health scoring**      | 0–100 composite score, five weighted dimensions: freshness 25%, compliance 20%, deprecated density 25%, size 20%, activity 10%      |
+| **Risk diagnostics**    | YANKED-001 / OUTDATED-001 / LICENSE-001 / DEPRECATED-001 / SIZE-001 / ACTIVITY-001 / DUP-001 / CYCLE-001                            |
+| **3D graph**            | three.js force-directed layout; node size encodes footprint, color encodes health; search-to-focus and dependency-path highlighting |
+| **Trend tracking**      | Historical scores kept in localStorage, rendered as a hand-drawn Canvas line chart                                                  |
+| **Ecosystem dashboard** | Full-catalog analysis of mooncakes.io: license distribution, active/stale package stats, risk-type counts                           |
+| **AI diagnostics**      | Any OpenAI-compatible API: single-risk diagnosis / full report / fix-PR draft; built-in rule engine fallback without an API key     |
+| **Shareable results**   | Results encoded into a `#share=<payload>` URL; recipients restore the view without re-analysis                                      |
 
-## 技术架构
+## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
 │  React 19 + TypeScript + Vite + Tailwind │
-│  three.js / OGL — 可视化层               │
+│  three.js / OGL — visualization layer    │
 ├─────────────────────────────────────────┤
 │  MoonBit WASM (wasm-gc + js-string)      │
-│  ↓ 失败时自动回退到纯 TS 实现（行为一致）  │
+│  ↓ auto-fallback to the pure TS engine   │
+│    (identical behavior) on failure       │
 ├─────────────────────────────────────────┤
 │  Vercel Serverless Functions             │
 │  /api/download/*   /api/health           │
 ├─────────────────────────────────────────┤
-│  mooncakes.io API（CORS 全开放，浏览器直连）│
-│  + 下载 ZIP 包（dev 走 Vite proxy）        │
+│  mooncakes.io API (open CORS, browser-   │
+│  direct) + ZIP downloads (Vite proxy     │
+│  in dev)                                 │
 └─────────────────────────────────────────┘
 ```
 
-### 分析引擎
+### Analysis engine
 
-核心引擎用 **MoonBit** 编写，编译为 **WASM**（wasm-gc + JS String Builtins），与纯 TypeScript 回退实现保持行为完全一致。
+The core engine is written in **MoonBit** and compiled to **WASM** (wasm-gc + JS string builtins), kept behaviorally identical to the pure TypeScript fallback.
 
-- 引擎源码: `../moonbit/main/*.mbt`
-- WASM 产物: `public/depsight.wasm`
-- TS 回退: `src/lib/analyzer.ts`（约 1400 行，逐行对齐 WASM 逻辑）
+- Engine source: `../moonbit/main/*.mbt`
+- WASM artifact: `public/depsight.wasm`
+- TS fallback: `src/lib/analyzer.ts` (~1,400 lines, aligned with the WASM logic line by line)
 
-**桥接策略**：
+**Bridging strategy**:
 
-- `version()` 契约门：版本不符自动禁用 WASM
-- 连续失败熔断：3 次失败后自动降级
-- 超大输入防护：context JSON > 8MB 跳过 WASM
+- `version()` contract gate: WASM is disabled automatically on version mismatch
+- Circuit breaker: degrades to the TS engine after 3 consecutive failures
+- Oversized-input guard: context JSON > 8 MB bypasses WASM
+- Contract tests: `moon test` in `../moonbit` and `npm test` here assert identical outputs for shared fixtures
 
-### API 端点
+### API endpoints
 
-| 端点                               | 说明                                    |
-| ---------------------------------- | --------------------------------------- |
-| `GET /api/health`                  | 健康检查 `{ ok, service, version, ts }` |
-| `GET /api/download/:name/:version` | 代理下载包 ZIP（同源规避 CORS）         |
+| Endpoint                           | Description                                             |
+| ---------------------------------- | ------------------------------------------------------- |
+| `GET /api/health`                  | Health check `{ ok, service, version, ts }`             |
+| `GET /api/download/:name/:version` | Proxied package ZIP download (same-origin, avoids CORS) |
 
-> 模块列表与 manifest 由浏览器直连 `https://mooncakes.io/api/v0`（官方 CORS 全开放），不再需要服务端代理。
+> The module list and manifests are fetched browser-direct from `https://mooncakes.io/api/v0` (officially open CORS), so no server-side proxy is needed for them.
 
-## 本地开发
+## Local development
 
 ```bash
 npm install
-npm run dev        # 开发服务器
-npm run build      # 生产构建
-npm test           # 运行测试
-npm run lint       # 代码检查
+npm run dev        # dev server
+npm run build      # production build
+npm test           # run tests
+npm run lint       # lint
 ```
 
-## 部署
+## Deployment
 
-### Vercel（推荐）
+### Vercel (recommended)
 
 ```bash
 npm i -g vercel
 vercel --prod
 ```
 
-`vercel.json` 已配置：
+`vercel.json` is preconfigured:
 
 - `/assets/*` → `max-age=31536000, immutable`
-- WASM/媒体 → 1 天缓存
+- WASM / media → 1-day cache
 - `/api/*` → `no-store`
 - SPA fallback rewrite → `/index.html`
 
-### 环境变量
+### Environment variables
 
-无需环境变量。AI 诊断的 API Key 由用户在浏览器 localStorage 中自行配置。
+None required. The AI diagnostics API key is configured by each user in browser localStorage.
 
-## 数据流
+## Data flow
 
 ```
-moon.mod 文本
+moon.mod text
     ↓
-fetcher.ts — mooncakes.io 客户端（多层缓存）
+fetcher.ts — mooncakes.io client (multi-layer cache)
     ↓
-BFS 展开传递依赖 → AnalysisContext
+BFS expansion of transitive deps → AnalysisContext
     ↓
-WASM / TS 引擎分析
+WASM / TS engine analysis
     ↓
-Dashboard (评分) + RiskList (诊断) + GraphView (3D图)
+Dashboard (score) + RiskList (diagnostics) + GraphView (3D)
 ```
 
-## 缓存策略
+## Caching strategy
 
-| 数据                     | 存储           | TTL     |
-| ------------------------ | -------------- | ------- |
-| 模块列表                 | sessionStorage | 30 分钟 |
-| manifest / mod / LICENSE | localStorage   | 24 小时 |
-| 分析历史                 | localStorage   | 20 条   |
-| 主题 / AI 设置           | localStorage   | 永久    |
+| Data                     | Storage        | TTL        |
+| ------------------------ | -------------- | ---------- |
+| Module list              | sessionStorage | 30 minutes |
+| manifest / mod / LICENSE | localStorage   | 24 hours   |
+| Analysis history         | localStorage   | 20 entries |
+| Theme / AI settings      | localStorage   | permanent  |
 
-## 技术栈
+## Tech stack
 
-| 层       | 技术                                              |
-| -------- | ------------------------------------------------- | --- |
-| 前端     | React 19, TypeScript ~6.0, Vite 8, Tailwind CSS 3 |
-| 可视化   | three.js, OGL, Canvas                             |     |
-| 分析引擎 | MoonBit → WASM (wasm-gc)                          |
-| 后端     | Vercel Serverless Functions                       |
-| 数据源   | mooncakes.io API + ZIP 包                         |
-| 部署     | Vercel（Serverless Functions）                    |
+| Layer           | Technology                                        |
+| --------------- | ------------------------------------------------- |
+| Frontend        | React 19, TypeScript ~6.0, Vite 8, Tailwind CSS 3 |
+| Visualization   | three.js, OGL, Canvas                             |
+| Analysis engine | MoonBit → WASM (wasm-gc)                          |
+| Backend         | Vercel Serverless Functions                       |
+| Data source     | mooncakes.io API + ZIP packages                   |
+| Deployment      | Vercel (Serverless Functions)                     |
 
 ## License
 
