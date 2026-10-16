@@ -4,7 +4,17 @@ MoonBit 依赖健康分析工具 — 在过期依赖进入生产环境前，帮�
 
 在线体验: [depsight.xruoyu.xyz](https://depsight.xruoyu.xyz/)
 
-![og](./public/og.png)
+![Depsight 首页](../docs/images/hero.png)
+
+## 产品预览
+
+| 依赖分析仪表盘（评分 + 风险清单）   | 3D 依赖图（体积/健康分映射）    |
+| ----------------------------------- | ------------------------------- |
+| ![分析](../docs/images/analyze.png) | ![图](../docs/images/graph.png) |
+
+| 健康分趋势追踪                     | 生态看板（mooncakes.io 全量统计）     |
+| ---------------------------------- | ------------------------------------- |
+| ![趋势](../docs/images/trends.png) | ![生态](../docs/images/ecosystem.png) |
 
 ## 功能
 
@@ -30,9 +40,10 @@ MoonBit 依赖健康分析工具 — 在过期依赖进入生产环境前，帮�
 │  ↓ 失败时自动回退到纯 TS 实现（行为一致）  │
 ├─────────────────────────────────────────┤
 │  Vercel Serverless Functions             │
-│  /api/modules  /api/download/*  /api/health│
+│  /api/download/*   /api/health           │
 ├─────────────────────────────────────────┤
-│  mooncakes.io API + 下载 ZIP 包           │
+│  mooncakes.io API（CORS 全开放，浏览器直连）│
+│  + 下载 ZIP 包（dev 走 Vite proxy）        │
 └─────────────────────────────────────────┘
 ```
 
@@ -40,7 +51,7 @@ MoonBit 依赖健康分析工具 — 在过期依赖进入生产环境前，帮�
 
 核心引擎用 **MoonBit** 编写，编译为 **WASM**（wasm-gc + JS String Builtins），与纯 TypeScript 回退实现保持行为完全一致。
 
-- 引擎源码: `d:\MoonStep\moonbit\main\*.mbt`
+- 引擎源码: `../moonbit/main/*.mbt`
 - WASM 产物: `public/depsight.wasm`
 - TS 回退: `src/lib/analyzer.ts`（约 1400 行，逐行对齐 WASM 逻辑）
 
@@ -52,12 +63,12 @@ MoonBit 依赖健康分析工具 — 在过期依赖进入生产环境前，帮�
 
 ### API 端点
 
-| 端点                                   | 说明                                    |
-| -------------------------------------- | --------------------------------------- |
-| `GET /api/modules`                     | 代理 mooncakes.io 模块列表              |
-| `GET /api/modules/:name`               | 代理单包 manifest                       |
-| `GET /api/download/:name/:version.zip` | 代理下载包 ZIP                          |
-| `GET /api/health`                      | 健康检查 `{ ok, service, version, ts }` |
+| 端点                               | 说明                                    |
+| ---------------------------------- | --------------------------------------- |
+| `GET /api/health`                  | 健康检查 `{ ok, service, version, ts }` |
+| `GET /api/download/:name/:version` | 代理下载包 ZIP（同源规避 CORS）         |
+
+> 模块列表与 manifest 由浏览器直连 `https://mooncakes.io/api/v0`（官方 CORS 全开放），不再需要服务端代理。
 
 ## 本地开发
 
