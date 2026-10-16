@@ -2,7 +2,7 @@
 
 Dependency-health analysis for the MoonBit ecosystem. Depsight turns a single `moon.mod` into a health report: a full dependency graph, license and freshness signals, and AI-assisted fixes — surfacing risky dependencies before they reach production.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./depsight-web/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![MoonBit](https://img.shields.io/badge/engine-MoonBit%20wasm--gc-orange)](https://www.moonbitlang.com/)
 [![mooncakes](https://img.shields.io/badge/mooncakes-Tino--hue%2Fdepsight--wasm--api-blue)](https://mooncakes.io/docs/#/Tino-hue/depsight-wasm-api)
 [![Online](https://img.shields.io/badge/live%20demo-depsight.xruoyu.xyz-brightgreen)](https://depsight.xruoyu.xyz/)
@@ -118,4 +118,4 @@ Issues and pull requests are welcome. For non-trivial changes, open an issue fir
 - Web app deep dive: [depsight-web/README.md](./depsight-web/README.md)
 - Delivery notes: [depsight-web/DELIVERY.md](./depsight-web/DELIVERY.md)
 - MoonBit package: [Tino-hue/depsight-wasm-api](https://mooncakes.io/docs/#/Tino-hue/depsight-wasm-api)
-- License: MIT (see [depsight-web/LICENSE](./depsight-web/LICENSE))
+- License: MIT (see [LICENSE](./LICENSE))
