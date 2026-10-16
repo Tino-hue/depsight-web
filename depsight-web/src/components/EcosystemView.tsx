@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ShareButton } from "@/components/ShareButton";
 import { WorkbenchShell } from "@/components/WorkbenchShell";
-import { fetchAllModules } from "@/lib/fetcher";
+import { fetchAllModules, refreshRemoteData } from "@/lib/fetcher";
 import type {
   EcoTopPackage,
   EcosystemData,
@@ -397,7 +397,10 @@ export function EcosystemView() {
     }
     if (!realCache) setStatus("Fetching mooncakes.io ecosystem data…");
     try {
-      const modules = await fetchAllModules();
+      // force：绕过模块列表 30 分钟缓存与 manifest/mod 24 小时缓存，强制重拉
+      const modules = force
+        ? await refreshRemoteData()
+        : await fetchAllModules();
       const real = buildEcosystemFromModules(modules);
       realCache = real;
       setEco(real);
@@ -566,6 +569,7 @@ export function EcosystemView() {
             size="sm"
             onClick={onRefresh}
             disabled={refreshing}
+            title="Force re-fetch from mooncakes.io (bypass cache TTL)"
             className="workbench-refresh-btn"
           >
             <RefreshCw

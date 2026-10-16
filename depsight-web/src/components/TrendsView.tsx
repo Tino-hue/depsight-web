@@ -1,10 +1,12 @@
 // 健康分历史趋势视图：Canvas 折线图（无第三方图表库）
 // 用户分析历史（localStorage）+ mooncakes.io 真实发布活跃聚合
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 
 import { ShareButton } from "@/components/ShareButton";
+import { Button } from "@/components/ui/button";
 import { WorkbenchShell } from "@/components/WorkbenchShell";
-import { fetchAllModules } from "@/lib/fetcher";
+import { fetchAllModules, refreshRemoteData } from "@/lib/fetcher";
 import type { MooncakesModule, TrendPoint } from "@/lib/types";
 import { useApp } from "@/state/AppContext";
 
@@ -227,6 +229,25 @@ export function TrendsView() {
   const [activityStatus, setActivityStatus] = useState<
     "loading" | "ok" | "error"
   >(() => (activityCache ? "ok" : "loading"));
+  const [refreshing, setRefreshing] = useState(false);
+
+  // 手动刷新：绕过模块列表 30 分钟缓存与 manifest/mod 24 小时缓存，强制重拉并重聚合
+  const onRefreshActivity = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const modules = await refreshRemoteData();
+      const buckets = aggregateActivity(modules);
+      activityCache = buckets;
+      setActivity(buckets);
+      setActivityStatus("ok");
+    } catch (e) {
+      console.warn("[trends] manual refresh failed:", e);
+      setActivityStatus("error");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing]);
 
   // 用户真实分析历史（localStorage 持久化，AppContext 管理），不再混入 demo
   const allTrends = useMemo(() => trends, [trends]);
@@ -375,6 +396,19 @@ export function TrendsView() {
                   ? "Live data unavailable"
                   : `Last 12 months · source: mooncakes.io`}
             </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRefreshActivity}
+              disabled={refreshing}
+              title="Force re-fetch from mooncakes.io (bypass cache TTL)"
+              className="workbench-refresh-btn"
+            >
+              <RefreshCw
+                className={refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"}
+              />
+              Refresh
+            </Button>
           </div>
           <div className="workbench-card-body">
             <div ref={activityWrapRef} className="w-full">

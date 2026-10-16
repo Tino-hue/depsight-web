@@ -126,6 +126,8 @@ Dashboard (score) + RiskList (diagnostics) + GraphView (3D)
 | Analysis history         | localStorage   | 20 entries |
 | Theme / AI settings      | localStorage   | permanent  |
 
+The **Refresh** button on the Trends and Ecosystem views bypasses every TTL: it force-refetches the module list from mooncakes.io and clears the manifest / mod caches so the next analysis also hits the network.
+
 ## Tech stack
 
 | Layer           | Technology                                        |

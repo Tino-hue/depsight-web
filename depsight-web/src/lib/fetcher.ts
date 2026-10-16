@@ -235,7 +235,13 @@ function fetchZipBytes(
 // ===== 全量模块列表（供真实搜索；sessionStorage 缓存 30 分钟）=====
 let modulesCache: MooncakesModule[] | null = null;
 
-export async function fetchAllModules(): Promise<MooncakesModule[]> {
+export async function fetchAllModules(
+  force = false,
+): Promise<MooncakesModule[]> {
+  if (force) {
+    modulesCache = null;
+    getStorage("session")?.removeItem(MODULES_CACHE_KEY);
+  }
   if (modulesCache) return modulesCache;
 
   const store = getStorage("session");
@@ -276,6 +282,31 @@ export async function fetchAllModules(): Promise<MooncakesModule[]> {
     }
   }
   return modulesCache;
+}
+
+// ===== 手动刷新（绕过全部 TTL）=====
+/** 清空 manifest / mod 文本本地缓存，使下一次分析强制走网络取最新元数据 */
+export function clearPackageCaches(): void {
+  const store = getStorage("local");
+  if (!store) return;
+  const doomed: string[] = [];
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i);
+    if (
+      k &&
+      (k.startsWith(MANIFEST_CACHE_PREFIX) ||
+        k.startsWith(MODTEXT_CACHE_PREFIX))
+    ) {
+      doomed.push(k);
+    }
+  }
+  for (const k of doomed) store.removeItem(k);
+}
+
+/** 手动刷新入口：清空模块列表 + manifest + mod 缓存后强制重拉模块列表 */
+export async function refreshRemoteData(): Promise<MooncakesModule[]> {
+  clearPackageCaches();
+  return fetchAllModules(true);
 }
 
 // ===== 模块 manifest（localStorage 缓存 24h；best-effort，失败重试一次后返回 null）=====
